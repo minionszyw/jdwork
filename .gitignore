@@ -1,0 +1,31 @@
+# 原始导出数据和生成结果
+/raw/
+/norm/
+/docs/
+
+# Python 缓存和本地环境
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+.env
+
+# Excel 临时文件
+~$*.xlsx
+~$*.xls
+*.tmp
+
+# 编辑器和系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 测试、日志和构建产物
+.pytest_cache/
+*.log
+build/
+dist/
+*.egg-info/
