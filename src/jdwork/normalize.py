@@ -4,6 +4,7 @@ import gc
 import math
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -51,6 +52,11 @@ def rule_fields(rule: dict[str, Any]) -> list[str]:
 
 def validate_config(config: dict[str, Any]) -> None:
     errors: list[str] = []
+    paths = config.get("paths", {})
+    if not isinstance(paths, dict):
+        errors.append("paths 必须是对象")
+    elif "norm" in paths:
+        errors.append("paths.norm 已停用，请改用 paths.normalize")
     sources = config.get("sources")
     rules = config.get("rules")
     if not isinstance(sources, dict):
@@ -225,7 +231,7 @@ def actual_sheet_name(runner: ExcelRunner, path: Path, requested: str | None, de
 
 def make_sources(
     raw_dir: Path,
-    norm_dir: Path,
+    normalize_dir: Path,
     sources: dict[str, Any],
     shop: dict[str, Any] | None,
     default_sheet: str,
@@ -237,7 +243,7 @@ def make_sources(
         if name in excluded:
             continue
         item = sources[name]
-        root = norm_dir if item.get("output") else raw_dir
+        root = normalize_dir if item.get("output") else raw_dir
         filename = item.get("output") or item["file"]
         path = source_path(root, filename)
         refs[name] = external_ref(path, item.get("sheet") or default_sheet, item.get("reference_range", "$A:$XFD"))
@@ -251,7 +257,7 @@ def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, sourc
     if output_path.exists() and not bool(defaults.get("overwrite", True)):
         raise FileExistsError(f"输出已存在且 overwrite=false: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_name(f".{output_path.stem}.norm-tmp.xlsx")
+    temporary = output_path.with_name(f".{output_path.stem}.normalize-tmp.xlsx")
     if temporary.exists():
         temporary.unlink()
     book = runner.open(input_path, read_only=False, password=source.get("password"))
@@ -276,10 +282,15 @@ def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, sourc
         ws = None
         gc.collect()
         closed = True
-        try:
-            os.replace(temporary, output_path)
-        except PermissionError as exc:
-            raise PermissionError(f"无法替换输出文件，请关闭正在打开的 Excel 文件: {output_path}") from exc
+        for attempt in range(10):
+            try:
+                os.replace(temporary, output_path)
+                break
+            except PermissionError as exc:
+                if attempt == 9:
+                    raise PermissionError(f"无法替换输出文件，请关闭正在打开的 Excel 文件: {output_path}") from exc
+                gc.collect()
+                time.sleep(0.5)
         print(f"完成: {input_path.name} -> {output_path.name} ({max(0, last - header_row)} 行)")
     except Exception:
         if not closed:
@@ -357,12 +368,12 @@ def context(config_path: Path) -> tuple[dict[str, Any], Path, Path, dict[str, An
     config = load_config(config_path)
     base = config_path.parent.resolve()
     paths = config.get("paths", {})
-    raw_value = paths.get("raw", "raw")
-    norm_value = paths.get("norm", "norm")
+    raw_value = paths.get("raw", "../data/raw")
+    normalize_value = paths.get("normalize", "../data/normalize")
     raw_dir = source_path(base, raw_value)
-    norm_dir = source_path(base, norm_value)
+    normalize_dir = source_path(base, normalize_value)
     defaults = {"default_sheet": "Sheet1", "header_row": 1, "overwrite": True, **config.get("excel", {})}
-    return config, raw_dir.resolve(), norm_dir.resolve(), defaults
+    return config, raw_dir.resolve(), normalize_dir.resolve(), defaults
 
 
 def check(config_path: Path) -> None:
@@ -376,7 +387,7 @@ def check(config_path: Path) -> None:
 
 
 def run(config_path: Path) -> None:
-    config, raw_dir, norm_dir, defaults = context(config_path)
+    config, raw_dir, normalize_dir, defaults = context(config_path)
     rules = config["rules"]
     runner = ExcelRunner()
     try:
@@ -388,13 +399,13 @@ def run(config_path: Path) -> None:
             output = item.get("output", fixed_outputs[name])
             refs = {} if name == "erp_inventory" else make_sources(
                 raw_dir,
-                norm_dir,
+                normalize_dir,
                 sources,
                 None,
                 defaults["default_sheet"],
                 {name},
             )
-            process_file(runner, source_path(raw_dir, item), source_path(norm_dir, output), item, rules[name], defaults, refs)
+            process_file(runner, source_path(raw_dir, item), source_path(normalize_dir, output), item, rules[name], defaults, refs)
         for configured_shop in sources.get("shops", []):
             if not configured_shop.get("enabled", True):
                 continue
@@ -406,7 +417,7 @@ def run(config_path: Path) -> None:
             selected_rule = shop.get("rule", "shop_product")
             output = shop.get("output") or f"{product.stem}.xlsx"
             source = {"sheet": shop["product_sheet"], "password": shop.get("product_password")}
-            process_file(runner, product, source_path(norm_dir, output), source, rules[selected_rule], defaults, make_sources(raw_dir, norm_dir, sources, shop, defaults["default_sheet"]))
+            process_file(runner, product, source_path(normalize_dir, output), source, rules[selected_rule], defaults, make_sources(raw_dir, normalize_dir, sources, shop, defaults["default_sheet"]))
     finally:
         runner.shutdown()
 

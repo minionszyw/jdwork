@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import read_json, source_path
-from . import normalize as norm
+from . import normalize
 
 OPERATORS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in", "contains", "not_contains", "is_empty", "not_empty"}
 
@@ -22,7 +22,7 @@ def values_from_range(value: Any, row_count: int, col_count: int) -> list[tuple]
             item = value[0]
             return [(item[0] if isinstance(item, tuple) else item,)]
         return [(value,)]
-    raw = norm.as_tuple(value)
+    raw = normalize.as_tuple(value)
     if row_count == 1:
         if len(raw) == 1 and isinstance(raw[0], tuple):
             return [raw[0]]
@@ -31,16 +31,16 @@ def values_from_range(value: Any, row_count: int, col_count: int) -> list[tuple]
 
 
 def read_sheet(
-    runner: norm.ExcelRunner,
+    runner: normalize.ExcelRunner,
     path: Path,
     sheet_name: str | None,
     default_sheet: str,
     header_row: int = 1,
 ) -> tuple[Any, Any, list[str], list[dict[str, Any]]]:
     book = runner.open(path, read_only=True)
-    ws = norm.sheet_for(book, sheet_name, default_sheet)
-    header_values, mapping = norm.headers(ws, header_row)
-    last_row = norm.used_last_row(ws, header_row)
+    ws = normalize.sheet_for(book, sheet_name, default_sheet)
+    header_values, mapping = normalize.headers(ws, header_row)
+    last_row = normalize.used_last_row(ws, header_row)
     last_col = max(mapping.values(), default=0)
     if last_row < header_row + 1 or last_col == 0:
         return book, ws, header_values, []
@@ -59,7 +59,7 @@ def comparable(value: Any) -> Any:
         return value
     if isinstance(value, (int, float)):
         return float(value)
-    text = norm.clean_text(value)
+    text = normalize.clean_text(value)
     if text is None or text == "":
         return None
     try:
@@ -75,7 +75,7 @@ def equal_value(left: Any, right: Any) -> bool:
 
 def apply_operator(actual: Any, operator: str, expected: Any) -> bool:
     if operator in {"is_empty", "not_empty"}:
-        empty = actual is None or norm.clean_text(actual) == ""
+        empty = actual is None or normalize.clean_text(actual) == ""
         return empty if operator == "is_empty" else not empty
     if operator in {"in", "not_in"}:
         if not isinstance(expected, list):
@@ -124,6 +124,11 @@ def matches_rule(row: dict[str, Any], rule: dict[str, Any]) -> bool:
 
 
 def validate_filter_config(config: dict[str, Any]) -> None:
+    paths = config.get("paths", {})
+    if not isinstance(paths, dict):
+        raise ValueError("paths 必须是对象")
+    if "norm_config" in paths:
+        raise ValueError("paths.norm_config 已停用，请改用 paths.normalize_config")
     if not isinstance(config.get("filters"), list):
         raise ValueError("filter.json 必须包含 filters 数组")
     keys = set()
@@ -160,11 +165,11 @@ def validate_filter_config(config: dict[str, Any]) -> None:
         raise ValueError("backfill.verify_fields 必须是非空字符串数组")
 
 
-def validate_backfill_fields(config: dict[str, Any], norm_config: dict[str, Any]) -> None:
+def validate_backfill_fields(config: dict[str, Any], normalize_config: dict[str, Any]) -> None:
     writable = set(config.get("backfill", {}).get("fields", []))
-    for shop in norm_config["sources"].get("shops", []):
+    for shop in normalize_config["sources"].get("shops", []):
         selected = shop.get("rule", "shop_product")
-        calculated = set(norm.rule_fields(norm_config["rules"][selected]))
+        calculated = set(normalize.rule_fields(normalize_config["rules"][selected]))
         overlap = sorted(writable & calculated)
         if overlap:
             raise ValueError(f"店铺 {shop['name']} 的回填字段包含公式列: {', '.join(overlap)}")
@@ -174,13 +179,13 @@ def load_filter_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path
     config = read_json(path)
     validate_filter_config(config)
     base = path.parent.resolve()
-    norm_config_path = source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
-    norm_config = norm.load_config(norm_config_path)
-    validate_backfill_fields(config, norm_config)
-    norm_base = norm_config_path.parent.resolve()
-    norm_dir = source_path(norm_base, norm_config.get("paths", {}).get("norm", "norm")).resolve()
-    output_dir = source_path(base, config.get("paths", {}).get("output", "filter")).resolve()
-    return config, norm_config, norm_dir, output_dir
+    normalize_config_path = source_path(base, config.get("paths", {}).get("normalize_config", "normalize.json"))
+    normalize_config = normalize.load_config(normalize_config_path)
+    validate_backfill_fields(config, normalize_config)
+    normalize_base = normalize_config_path.parent.resolve()
+    normalize_dir = source_path(normalize_base, normalize_config.get("paths", {}).get("normalize", "../data/normalize")).resolve()
+    output_dir = source_path(base, config.get("paths", {}).get("output", "../data/filter")).resolve()
+    return config, normalize_config, normalize_dir, output_dir
 
 
 def batch_id(value: str | None) -> str:
@@ -190,19 +195,19 @@ def batch_id(value: str | None) -> str:
     return result
 
 
-def shop_input(norm_config: dict[str, Any], norm_dir: Path, shop: dict[str, Any]) -> tuple[Path, str | None]:
+def shop_input(normalize_config: dict[str, Any], normalize_dir: Path, shop: dict[str, Any]) -> tuple[Path, str | None]:
     output = shop.get("output") or f"{Path(shop['product']).stem}.xlsx"
-    return norm_dir / output, shop.get("product_sheet")
+    return normalize_dir / output, shop.get("product_sheet")
 
 
-def filter_rows(config: dict[str, Any], norm_config: dict[str, Any], norm_dir: Path, runner: norm.ExcelRunner) -> tuple[list[str], list[tuple[Any, ...]]]:
+def filter_rows(config: dict[str, Any], normalize_config: dict[str, Any], normalize_dir: Path, runner: normalize.ExcelRunner) -> tuple[list[str], list[tuple[Any, ...]]]:
     rules = [rule for rule in config["filters"] if rule.get("enabled", True)]
     output_headers: list[str] | None = None
     output_rows: list[tuple[Any, ...]] = []
-    for shop in norm_config["sources"].get("shops", []):
+    for shop in normalize_config["sources"].get("shops", []):
         if not shop.get("enabled", True):
             continue
-        path, sheet = shop_input(norm_config, norm_dir, shop)
+        path, sheet = shop_input(normalize_config, normalize_dir, shop)
         if not path.exists():
             raise FileNotFoundError(f"店铺 {shop['name']} 的标准化文件不存在: {path}")
         book, _, headers, rows = read_sheet(
@@ -229,7 +234,7 @@ def filter_rows(config: dict[str, Any], norm_config: dict[str, Any], norm_dir: P
     return output_headers or ["店铺", "类型"], output_rows
 
 
-def write_output(runner: norm.ExcelRunner, output_path: Path, headers: list[str], rows: list[tuple[Any, ...]], overwrite: bool) -> None:
+def write_output(runner: normalize.ExcelRunner, output_path: Path, headers: list[str], rows: list[tuple[Any, ...]], overwrite: bool) -> None:
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"筛选输出已存在: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -265,20 +270,20 @@ def write_output(runner: norm.ExcelRunner, output_path: Path, headers: list[str]
 
 
 def check(config_path: Path) -> None:
-    config, norm_config, norm_dir, _ = load_filter_config(config_path)
-    runner = norm.ExcelRunner()
+    config, normalize_config, normalize_dir, _ = load_filter_config(config_path)
+    runner = normalize.ExcelRunner()
     try:
-        filter_rows(config, norm_config, norm_dir, runner)
+        filter_rows(config, normalize_config, normalize_dir, runner)
     finally:
         runner.shutdown()
     print("筛选配置和标准化输入检查通过")
 
 
 def run(config_path: Path, requested_batch_id: str | None) -> Path:
-    config, norm_config, norm_dir, output_dir = load_filter_config(config_path)
-    runner = norm.ExcelRunner()
+    config, normalize_config, normalize_dir, output_dir = load_filter_config(config_path)
+    runner = normalize.ExcelRunner()
     try:
-        headers, rows = filter_rows(config, norm_config, norm_dir, runner)
+        headers, rows = filter_rows(config, normalize_config, normalize_dir, runner)
         identifier = batch_id(requested_batch_id)
         filename = f"{config.get('output', {}).get('prefix', 'filter-')}{identifier}.xlsx"
         output_path = output_dir / filename

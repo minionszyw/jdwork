@@ -1,7 +1,7 @@
 {
   "paths": {
-    "raw": "../raw",
-    "norm": "../norm"
+    "raw": "../data/raw",
+    "normalize": "../data/normalize"
   },
   "excel": {
     "default_sheet": "Sheet1",

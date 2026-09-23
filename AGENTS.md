@@ -3,10 +3,10 @@
 ## Project Structure
 
 - `pyproject.toml` defines the installable package and `jdw` console entry point.
-- `config/` contains user-editable `norm.json` and `filter.json`.
+- `config/` contains user-editable `normalize.json` and `filter.json`.
 - `src/jdwork/` contains the CLI, shared Excel/config helpers, normalization, filtering, and backfill modules.
 - `tests/` contains Windows-independent unit tests. Excel COM integration checks use local workbooks.
-- `raw/`, `norm/`, `filter/`, and `docs/` are local data/output directories excluded from Git.
+- `data/raw/`, `data/normalize/`, `data/filter/`, and `docs/` are local data/output directories excluded from Git.
 
 ## Build, Test, and Development Commands
 
@@ -27,7 +27,7 @@ Run the workflow from the repository root:
 ```powershell
 jdw normalize
 jdw filter
-jdw backfill --input .\filter\filter-{batch_id}.xlsx --dry-run
+jdw backfill --input .\data\filter\filter-{batch_id}.xlsx --dry-run
 ```
 
 Validation commands:

@@ -16,18 +16,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    normalize = commands.add_parser("normalize", help="将 raw 表格标准化到 norm")
-    normalize.add_argument("-c", "--config", help="配置文件路径，默认 config/norm.json")
+    normalize = commands.add_parser("normalize", help="将 data/raw 表格标准化到 data/normalize")
+    normalize.add_argument("-c", "--config", help="配置文件路径，默认 config/normalize.json")
     normalize.add_argument("--check", action="store_true", help="只检查配置和输入，不生成输出")
 
-    filtering = commands.add_parser("filter", help="按规则筛选 norm 店铺表")
+    filtering = commands.add_parser("filter", help="按规则筛选 data/normalize 店铺表")
     filtering.add_argument("-c", "--config", help="配置文件路径，默认 config/filter.json")
     filtering.add_argument("--batch-id", help="14 位批次号，例如 20260923150000")
     filtering.add_argument("--check", action="store_true", help="只检查配置和标准化输入")
 
     backfill = commands.add_parser("backfill", help="将人工修改回填到 raw 店铺表")
     backfill.add_argument("-c", "--config", help="配置文件路径，默认 config/filter.json")
-    backfill.add_argument("-i", "--input", required=True, help="filter/filter-{batch_id}.xlsx")
+    backfill.add_argument("-i", "--input", required=True, help="data/filter/filter-{batch_id}.xlsx")
     backfill.add_argument("--dry-run", action="store_true", help="只预览变更，不保存 raw")
     return parser
 
@@ -38,7 +38,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "normalize":
             from . import normalize
 
-            config_path = resolve_config_path(args.config, "norm")
+            config_path = resolve_config_path(args.config, "normalize")
             normalize.check(config_path) if args.check else normalize.run(config_path)
         elif args.command == "filter":
             from . import filtering

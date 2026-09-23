@@ -1,7 +1,7 @@
 {
   "paths": {
-    "norm_config": "norm.json",
-    "output": "../filter"
+    "normalize_config": "normalize.json",
+    "output": "../data/filter"
   },
   "excel": {
     "default_sheet": "Sheet1",

@@ -1,8 +1,11 @@
 # 原始导出数据和生成结果
-/raw/*
-/norm/*
+/data/raw/*
+/data/normalize/*
+/data/filter/*
+!/data/raw/.gitkeep
+!/data/normalize/.gitkeep
+!/data/filter/.gitkeep
 /docs/*
-/filter/*
 
 # Python 缓存和本地环境
 __pycache__/

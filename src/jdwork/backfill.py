@@ -6,10 +6,10 @@ from typing import Any
 
 from .config import read_json, source_path
 from . import filtering as filter_module
-from . import normalize as norm
+from . import normalize
 
 
-def read_filter_rows(runner: norm.ExcelRunner, path: Path, sheet: str | None, header_row: int = 1) -> tuple[Any, list[str], list[dict[str, Any]]]:
+def read_filter_rows(runner: normalize.ExcelRunner, path: Path, sheet: str | None, header_row: int = 1) -> tuple[Any, list[str], list[dict[str, Any]]]:
     book, _, headers, rows = filter_module.read_sheet(runner, path, sheet, "Sheet1", header_row)
     return book, headers, rows
 
@@ -19,8 +19,8 @@ def normalized(value: Any) -> Any:
 
 
 def merge_changes(changes: dict[tuple[str, str], dict[str, Any]], row: dict[str, Any], fields: list[str]) -> None:
-    shop = norm.clean_text(row.get("店铺"))
-    skuid = norm.clean_text(row.get("SKUID"))
+    shop = normalize.clean_text(row.get("店铺"))
+    skuid = normalize.clean_text(row.get("SKUID"))
     if not shop or not skuid:
         raise ValueError("筛选结果缺少店铺或 SKUID")
     target = changes.setdefault((shop, skuid), {})
@@ -30,8 +30,8 @@ def merge_changes(changes: dict[tuple[str, str], dict[str, Any]], row: dict[str,
 
 
 def merge_verification(changes: dict[tuple[str, str], dict[str, Any]], row: dict[str, Any], fields: list[str]) -> None:
-    shop = norm.clean_text(row.get("店铺"))
-    skuid = norm.clean_text(row.get("SKUID"))
+    shop = normalize.clean_text(row.get("店铺"))
+    skuid = normalize.clean_text(row.get("SKUID"))
     target = changes[(shop, skuid)]
     for field in fields:
         marker = f"__verify__{field}"
@@ -43,19 +43,19 @@ def load_backfill_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Pa
     config = read_json(path)
     filter_module.validate_filter_config(config)
     base = path.parent.resolve()
-    norm_path = source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
-    norm_config = norm.load_config(norm_path)
-    filter_module.validate_backfill_fields(config, norm_config)
-    raw_dir = source_path(norm_path.parent.resolve(), norm_config.get("paths", {}).get("raw", "raw")).resolve()
-    return config, norm_config, raw_dir
+    normalize_path = source_path(base, config.get("paths", {}).get("normalize_config", "normalize.json"))
+    normalize_config = normalize.load_config(normalize_path)
+    filter_module.validate_backfill_fields(config, normalize_config)
+    raw_dir = source_path(normalize_path.parent.resolve(), normalize_config.get("paths", {}).get("raw", "../data/raw")).resolve()
+    return config, normalize_config, raw_dir
 
 
-def locate_shop(norm_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {shop["name"]: shop for shop in norm_config["sources"].get("shops", [])}
+def locate_shop(normalize_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {shop["name"]: shop for shop in normalize_config["sources"].get("shops", [])}
 
 
 def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], header_row: int) -> tuple[dict[str, int], dict[str, dict[str, Any]]]:
-    last = norm.used_last_row(ws, header_row)
+    last = normalize.used_last_row(ws, header_row)
     key_col = mapping[key]
     verify_cols = {field: mapping[field] for field in verify}
     values = ws.Range(ws.Cells(header_row + 1, 1), ws.Cells(last, max(mapping.values()))).Value
@@ -65,7 +65,7 @@ def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], h
     for offset, values_row in enumerate(rows):
         excel_row = header_row + 1 + offset
         value = values_row[key_col - 1] if key_col - 1 < len(values_row) else None
-        identity = norm.clean_text(value)
+        identity = normalize.clean_text(value)
         if not identity:
             continue
         if identity in result:
@@ -75,14 +75,14 @@ def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], h
     return result, checks
 
 
-def process_store(runner: norm.ExcelRunner, raw_dir: Path, shop: dict[str, Any], updates: dict[str, Any], verify_fields: list[str], dry_run: bool, backup: bool, header_row: int) -> int:
+def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, Any], updates: dict[str, Any], verify_fields: list[str], dry_run: bool, backup: bool, header_row: int) -> int:
     raw_path = source_path(raw_dir, shop, "product")
     book = runner.open(raw_path, read_only=dry_run, password=shop.get("product_password"))
     try:
-        ws = norm.sheet_for(book, shop.get("product_sheet"), "Sheet1")
-        _, mapping = norm.headers(ws, header_row)
+        ws = normalize.sheet_for(book, shop.get("product_sheet"), "Sheet1")
+        _, mapping = normalize.headers(ws, header_row)
         editable_fields = sorted({field for values in updates.values() for field in values if not field.startswith("__verify__")})
-        norm.require_columns(mapping, ["SKUID"] + verify_fields + editable_fields, ws.Name)
+        normalize.require_columns(mapping, ["SKUID"] + verify_fields + editable_fields, ws.Name)
         row_map, checks = raw_row_map(ws, mapping, "SKUID", verify_fields, header_row)
         changed = 0
         for skuid, fields in updates.items():
@@ -125,12 +125,12 @@ def process_store(runner: norm.ExcelRunner, raw_dir: Path, shop: dict[str, Any],
 
 
 def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
-    config, norm_config, raw_dir = load_backfill_config(config_path)
+    config, normalize_config, raw_dir = load_backfill_config(config_path)
     fields = config.get("backfill", {}).get("fields", [])
     verify_fields = config.get("backfill", {}).get("verify_fields", ["货号"])
     if not fields:
         raise ValueError("backfill.fields 不能为空")
-    runner = norm.ExcelRunner()
+    runner = normalize.ExcelRunner()
     try:
         book, headers, rows = read_filter_rows(
             runner,
@@ -150,14 +150,14 @@ def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
         for row in rows:
             merge_changes(changes, row, fields)
             merge_verification(changes, row, verify_fields)
-        shops = locate_shop(norm_config)
+        shops = locate_shop(normalize_config)
         grouped: dict[str, dict[str, dict[str, Any]]] = {}
         for (shop, skuid), update in changes.items():
             if shop not in shops:
-                raise ValueError(f"norm.json 中找不到店铺: {shop}")
+                raise ValueError(f"normalize.json 中找不到店铺: {shop}")
             grouped.setdefault(shop, {})[skuid] = update
         total = 0
-        raw_header_row = int(norm_config.get("excel", {}).get("header_row", 1))
+        raw_header_row = int(normalize_config.get("excel", {}).get("header_row", 1))
         for shop_name, updates in grouped.items():
             total += process_store(runner, raw_dir, shops[shop_name], updates, verify_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
         print(f"{'预览' if dry_run else '回填'}完成，共 {total} 个字段变更")
