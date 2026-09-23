@@ -207,6 +207,26 @@ py -m pip install --upgrade -r .\requirements.txt
 python -m unittest discover -s tests -v
 ```
 
+## 筛选和回填
+
+`filter.py` 根据 `filter.json` 对启用店铺的 `norm/*商品.xlsx` 执行筛选，输出到 `filter/filter-{batch_id}.xlsx`：
+
+```powershell
+py .\filter.py --check
+py .\filter.py --batch-id 20260922171715
+```
+
+筛选文件会增加 `店铺` 和 `类型` 两列，并保留标准化商品表字段。一条商品命中多个规则时会输出多行。
+
+`backfill.py` 按 `店铺 + SKUID` 定位 raw 商品表，`货号`用于一致性校验，只回填 `filter.json` 中 `backfill.fields` 明确列出的字段：
+
+```powershell
+py .\backfill.py --input .\filter\filter-20260922171715.xlsx --dry-run
+py .\backfill.py --input .\filter\filter-20260922171715.xlsx
+```
+
+默认只回填 `商品状态`。回填前会为 raw 文件创建 `.bak` 备份；筛选结果、`raw` 和 `norm` 均不进入 Git。
+
 ## 安全提示
 
 脚本会覆盖 `norm` 目录中同名输出文件，但不会修改 `raw` 原始文件。运行前如需保留旧结果，请先复制 `norm` 目录。

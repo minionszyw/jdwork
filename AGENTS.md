@@ -3,7 +3,10 @@
 ## Project Structure
 
 - `norm.py` is the Windows Excel COM normalization script.
+- `filter.py` applies configurable rules to normalized shop product workbooks.
+- `backfill.py` writes explicitly allowed changes from filter batches back to raw shop workbooks.
 - `norm.json` contains input paths, workbook sheets, field-format rules, lookup formulas, and calculated columns.
+- `filter.json` contains filter conditions, batch output settings, and the allowlist of backfill fields.
 - `requirements.txt` lists the Python dependency (`pywin32`).
 - `README.md` documents installation, configuration, and operation.
 - `tests/` contains Windows-independent unit tests for configuration and formula helpers.
@@ -44,6 +47,20 @@ Run unit tests:
 python -m unittest discover -s tests -v
 ```
 
+Run filter validation and create a batch:
+
+```powershell
+python .\filter.py --check
+python .\filter.py --batch-id 20260922171715
+```
+
+Preview and apply an approved batch:
+
+```powershell
+python .\backfill.py --input .\filter\filter-20260922171715.xlsx --dry-run
+python .\backfill.py --input .\filter\filter-20260922171715.xlsx
+```
+
 For behavior changes, run the unit tests and then run the normalizer against representative files in `raw/`; inspect formulas and calculated values in the generated workbooks.
 
 ## Coding Style and Naming
@@ -52,6 +69,7 @@ For behavior changes, run the unit tests and then run the normalizer against rep
 - Prefer small functions with explicit inputs and meaningful error messages.
 - Keep user-editable behavior in `norm.json`; avoid hard-coding paths, sheet names, or business formulas in Python.
 - Add or modify a shop through `sources.shops`; select a per-shop rule with `rule` instead of branching on the shop name in Python.
+- Add backfill permissions only through `filter.json` `backfill.fields`; never infer writable fields from the filter workbook.
 - Preserve Chinese source field names exactly when they are used as configuration keys.
 - Use `snake_case` for Python functions and variables; use descriptive JSON keys.
 
@@ -61,7 +79,7 @@ When changing normalization behavior, verify text fields preserve leading zeros,
 
 ## Commit and Pull Request Guidelines
 
-Use concise imperative commit subjects, for example `Add Excel table normalization script`. Keep commits focused on one logical change. Pull requests should describe the affected rules or configuration, list the validation command and result, and mention any Excel or Windows prerequisites. Do not commit files from `raw/`, `norm/`, `docs/`, credentials, or exported customer data.
+Use concise imperative commit subjects, for example `Add Excel table normalization script`. Keep commits focused on one logical change. Pull requests should describe the affected rules or configuration, list the validation command and result, and mention any Excel or Windows prerequisites. Do not commit files from `raw/`, `norm/`, `filter/`, `docs/`, credentials, or exported customer data.
 
 ## Security and Configuration
 

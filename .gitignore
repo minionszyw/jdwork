@@ -1,7 +1,8 @@
 # 原始导出数据和生成结果
-/raw/
-/norm/
-/docs/
+/raw/*
+/norm/*
+/docs/*
+/filter/*
 
 # Python 缓存和本地环境
 __pycache__/
