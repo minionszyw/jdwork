@@ -15,7 +15,7 @@
   "backfill": {
     "key_fields": ["SKUID"],
     "verify_fields": ["货号"],
-    "fields": ["商品状态"],
+    "fields": ["商品状态","商品总库存","京东价"],
     "backup": true
   },
   "filters": [
