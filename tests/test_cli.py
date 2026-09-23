@@ -1,0 +1,59 @@
+import contextlib
+import io
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from jdwork import cli
+from jdwork.config import resolve_config_path
+from jdwork.filtering import values_from_range, validate_filter_config
+
+
+class CliTest(unittest.TestCase):
+    def test_default_config_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(resolve_config_path(None, "norm", root), root / "config" / "norm.json")
+            self.assertEqual(resolve_config_path("other/filter.json", "filter", root), root / "other" / "filter.json")
+
+    def test_commands_dispatch_with_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("jdwork.config.Path.cwd", return_value=root), patch("jdwork.normalize.check") as check:
+                self.assertEqual(cli.main(["normalize", "--check"]), 0)
+                check.assert_called_once_with(root / "config" / "norm.json")
+            with patch("jdwork.config.Path.cwd", return_value=root), patch("jdwork.filtering.run") as run:
+                self.assertEqual(cli.main(["filter", "--batch-id", "20260923150000"]), 0)
+                run.assert_called_once_with(root / "config" / "filter.json", "20260923150000")
+
+    def test_backfill_requires_input(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cli.build_parser().parse_args(["backfill"])
+
+
+class RangeShapeTest(unittest.TestCase):
+    def test_single_row_stays_one_row(self):
+        self.assertEqual(values_from_range((("shop", "sku", 5),), 1, 3), [("shop", "sku", 5)])
+        self.assertEqual(values_from_range(("shop", "sku", 5), 1, 3), [("shop", "sku", 5)])
+
+    def test_single_cell_and_column(self):
+        self.assertEqual(values_from_range((("sku",),), 1, 1), [("sku",)])
+        self.assertEqual(values_from_range((("a",), ("b",)), 2, 1), [("a",), ("b",)])
+
+
+class FilterConfigTest(unittest.TestCase):
+    def test_rejects_unknown_operator(self):
+        config = {"filters": [{"key": "x", "name": "X", "conditions": [{"field": "状态", "operator": "wrong"}]}]}
+        with self.assertRaisesRegex(ValueError, "未知操作符"):
+            validate_filter_config(config)
+
+    def test_rejects_unsafe_backfill_field(self):
+        config = {"filters": [], "backfill": {"fields": ["商品状态", "店铺"]}}
+        with self.assertRaisesRegex(ValueError, "定位/元数据"):
+            validate_filter_config(config)
+
+
+if __name__ == "__main__":
+    unittest.main()

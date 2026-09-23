@@ -1,7 +1,7 @@
 import unittest
 
-import backfill
-import filter as filter_module
+from jdwork import backfill
+from jdwork import filtering as filter_module
 
 
 class FilterRulesTest(unittest.TestCase):

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jdwork"
+version = "0.1.0"
+description = "Excel COM based ERP and shop data workflow tools"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.scripts]
+jdw = "jdwork.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,7 +1,7 @@
 {
   "paths": {
-    "raw": "raw",
-    "norm": "norm"
+    "raw": "../raw",
+    "norm": "../norm"
   },
   "excel": {
     "default_sheet": "Sheet1",

@@ -1,28 +1,44 @@
 from __future__ import annotations
 
-import argparse
 import datetime as dt
-import json
+import gc
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
-import norm
+from .config import read_json, source_path
+from . import normalize as norm
+
+OPERATORS = {"eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in", "contains", "not_contains", "is_empty", "not_empty"}
 
 
-def values_from_range(value: Any) -> list[tuple]:
+def values_from_range(value: Any, row_count: int, col_count: int) -> list[tuple]:
+    """Return a two-dimensional COM range without collapsing a single row."""
+    if row_count <= 0:
+        return []
+    if row_count == 1 and col_count == 1:
+        if isinstance(value, tuple) and len(value) == 1:
+            item = value[0]
+            return [(item[0] if isinstance(item, tuple) else item,)]
+        return [(value,)]
     raw = norm.as_tuple(value)
-    if len(raw) == 1 and isinstance(raw[0], tuple):
-        raw = raw[0]
-    return [row if isinstance(row, tuple) else (row,) for row in raw]
+    if row_count == 1:
+        if len(raw) == 1 and isinstance(raw[0], tuple):
+            return [raw[0]]
+        return [raw]
+    return [item if isinstance(item, tuple) else (item,) for item in raw]
 
 
-def read_sheet(runner: norm.ExcelRunner, path: Path, sheet_name: str | None, default_sheet: str) -> tuple[Any, Any, list[str], list[dict[str, Any]]]:
+def read_sheet(
+    runner: norm.ExcelRunner,
+    path: Path,
+    sheet_name: str | None,
+    default_sheet: str,
+    header_row: int = 1,
+) -> tuple[Any, Any, list[str], list[dict[str, Any]]]:
     book = runner.open(path, read_only=True)
     ws = norm.sheet_for(book, sheet_name, default_sheet)
-    header_row = 1
     header_values, mapping = norm.headers(ws, header_row)
     last_row = norm.used_last_row(ws, header_row)
     last_col = max(mapping.values(), default=0)
@@ -30,7 +46,7 @@ def read_sheet(runner: norm.ExcelRunner, path: Path, sheet_name: str | None, def
         return book, ws, header_values, []
     values = ws.Range(ws.Cells(header_row + 1, 1), ws.Cells(last_row, last_col)).Value
     rows = []
-    for values_row in values_from_range(values):
+    for values_row in values_from_range(values, last_row - header_row, last_col):
         row = {header_values[index]: values_row[index] if index < len(values_row) else None for index in range(len(header_values)) if header_values[index]}
         rows.append(row)
     return book, ws, header_values, rows
@@ -121,24 +137,49 @@ def validate_filter_config(config: dict[str, Any]) -> None:
             raise ValueError(f"规则 {rule['key']} 的 logic 必须是 and 或 or")
         if not isinstance(rule.get("conditions", []), list):
             raise ValueError(f"规则 {rule['key']} 的 conditions 必须是数组")
+        for position, condition in enumerate(rule.get("conditions", [])):
+            if not isinstance(condition, dict) or not isinstance(condition.get("field"), str) or not condition["field"]:
+                raise ValueError(f"规则 {rule['key']} 的条件 {position} 必须包含 field")
+            operator = condition.get("operator", "eq")
+            if operator not in OPERATORS:
+                raise ValueError(f"规则 {rule['key']} 使用未知操作符: {operator}")
+            if operator in {"in", "not_in"} and not isinstance(condition.get("value"), list):
+                raise ValueError(f"规则 {rule['key']} 的 {operator} 条件必须使用数组 value")
     backfill = config.get("backfill", {})
+    if not isinstance(backfill, dict):
+        raise ValueError("backfill 必须是对象")
     fields = backfill.get("fields", [])
-    if not isinstance(fields, list) or any(not isinstance(field, str) for field in fields):
-        raise ValueError("backfill.fields 必须是字符串数组")
+    if not isinstance(fields, list) or any(not isinstance(field, str) or not field for field in fields):
+        raise ValueError("backfill.fields 必须是非空字符串数组")
+    if len(fields) != len(set(fields)) or set(fields) & {"店铺", "类型", "SKUID", "货号"}:
+        raise ValueError("backfill.fields 不能重复或包含定位/元数据字段")
     if backfill.get("key_fields", ["SKUID"]) != ["SKUID"]:
         raise ValueError("当前版本回填键必须为 ['SKUID']")
+    verify_fields = backfill.get("verify_fields", ["货号"])
+    if not isinstance(verify_fields, list) or any(not isinstance(field, str) or not field for field in verify_fields):
+        raise ValueError("backfill.verify_fields 必须是非空字符串数组")
+
+
+def validate_backfill_fields(config: dict[str, Any], norm_config: dict[str, Any]) -> None:
+    writable = set(config.get("backfill", {}).get("fields", []))
+    for shop in norm_config["sources"].get("shops", []):
+        selected = shop.get("rule", "shop_product")
+        calculated = set(norm.rule_fields(norm_config["rules"][selected]))
+        overlap = sorted(writable & calculated)
+        if overlap:
+            raise ValueError(f"店铺 {shop['name']} 的回填字段包含公式列: {', '.join(overlap)}")
 
 
 def load_filter_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
-    with path.open("r", encoding="utf-8-sig") as handle:
-        config = json.load(handle)
+    config = read_json(path)
     validate_filter_config(config)
     base = path.parent.resolve()
-    norm_config_path = norm.source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
+    norm_config_path = source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
     norm_config = norm.load_config(norm_config_path)
+    validate_backfill_fields(config, norm_config)
     norm_base = norm_config_path.parent.resolve()
-    norm_dir = norm.source_path(norm_base, norm_config.get("paths", {}).get("norm", "norm")).resolve()
-    output_dir = norm.source_path(base, config.get("paths", {}).get("output", "filter")).resolve()
+    norm_dir = source_path(norm_base, norm_config.get("paths", {}).get("norm", "norm")).resolve()
+    output_dir = source_path(base, config.get("paths", {}).get("output", "filter")).resolve()
     return config, norm_config, norm_dir, output_dir
 
 
@@ -164,8 +205,16 @@ def filter_rows(config: dict[str, Any], norm_config: dict[str, Any], norm_dir: P
         path, sheet = shop_input(norm_config, norm_dir, shop)
         if not path.exists():
             raise FileNotFoundError(f"店铺 {shop['name']} 的标准化文件不存在: {path}")
-        book, _, headers, rows = read_sheet(runner, path, sheet, config.get("excel", {}).get("default_sheet", "Sheet1"))
+        book, _, headers, rows = read_sheet(
+            runner,
+            path,
+            sheet,
+            config.get("excel", {}).get("default_sheet", "Sheet1"),
+            int(config.get("excel", {}).get("header_row", 1)),
+        )
         try:
+            if output_headers is not None and output_headers[2:] != headers:
+                raise ValueError(f"{path.name} 的字段顺序与其他店铺商品表不一致")
             for rule in rules:
                 missing = sorted({condition.get("field") for condition in rule.get("conditions", [])} - set(headers))
                 if missing:
@@ -203,6 +252,9 @@ def write_output(runner: norm.ExcelRunner, output_path: Path, headers: list[str]
         ws.Range(ws.Cells(1, 1), ws.Cells(end_row, end_col)).Value = tuple(all_values)
         book.SaveAs(str(temporary.resolve()), FileFormat=51)
         runner.close(book, False)
+        book = None
+        ws = None
+        gc.collect()
         os.replace(temporary, output_path)
     except Exception:
         if book in runner.open_books:
@@ -235,25 +287,3 @@ def run(config_path: Path, requested_batch_id: str | None) -> Path:
         return output_path
     finally:
         runner.shutdown()
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="筛选标准化店铺商品表")
-    parser.add_argument("-c", "--config", default="filter.json")
-    parser.add_argument("--batch-id")
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    try:
-        path = Path(args.config).resolve()
-        if args.check:
-            check(path)
-        else:
-            run(path, args.batch_id)
-        return 0
-    except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

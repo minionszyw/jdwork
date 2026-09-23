@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-import norm
+from jdwork import normalize as norm
 
 
 class NormHelpersTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class NormHelpersTest(unittest.TestCase):
         self.assertEqual(formula, "=J2*P2+SUM($U$2:$U$100)")
 
     def test_current_config_validates(self):
-        with Path("norm.json").open(encoding="utf-8") as handle:
+        with Path("config/norm.json").open(encoding="utf-8") as handle:
             norm.validate_config(json.load(handle))
 
 

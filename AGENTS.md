@@ -2,85 +2,61 @@
 
 ## Project Structure
 
-- `norm.py` is the Windows Excel COM normalization script.
-- `filter.py` applies configurable rules to normalized shop product workbooks.
-- `backfill.py` writes explicitly allowed changes from filter batches back to raw shop workbooks.
-- `norm.json` contains input paths, workbook sheets, field-format rules, lookup formulas, and calculated columns.
-- `filter.json` contains filter conditions, batch output settings, and the allowlist of backfill fields.
-- `requirements.txt` lists the Python dependency (`pywin32`).
-- `README.md` documents installation, configuration, and operation.
-- `tests/` contains Windows-independent unit tests for configuration and formula helpers.
-- `raw/` contains exported source workbooks and `norm/` contains generated workbooks. Both are excluded from Git.
-- `docs/` is reserved for local documentation and is excluded from Git.
+- `pyproject.toml` defines the installable package and `jdw` console entry point.
+- `config/` contains user-editable `norm.json` and `filter.json`.
+- `src/jdwork/` contains the CLI, shared Excel/config helpers, normalization, filtering, and backfill modules.
+- `tests/` contains Windows-independent unit tests. Excel COM integration checks use local workbooks.
+- `raw/`, `norm/`, `filter/`, and `docs/` are local data/output directories excluded from Git.
 
 ## Build, Test, and Development Commands
 
-Install dependencies:
+Install locally:
 
 ```powershell
-py -m pip install -r .\requirements.txt
+py -m pip install .
 ```
 
-Run the normalizer from the repository root:
+Use editable installation while developing:
 
 ```powershell
-py .\norm.py --config .\norm.json
+py -m pip install -e .
 ```
 
-The script requires Windows and an installed Microsoft Excel application. It reads `.xlsx` and `.csv` files through Excel COM and writes generated `.xlsx` files to `norm/`.
-
-Validate Python syntax without opening Excel:
+Run the workflow from the repository root:
 
 ```powershell
-python -m py_compile norm.py
+jdw normalize
+jdw filter
+jdw backfill --input .\filter\filter-{batch_id}.xlsx --dry-run
 ```
 
-Validate configuration and input workbooks without generating outputs:
+Validation commands:
 
 ```powershell
-python .\norm.py --check
-```
-
-Run unit tests:
-
-```powershell
+jdw normalize --check
+jdw filter --check
 python -m unittest discover -s tests -v
 ```
 
-Run filter validation and create a batch:
-
-```powershell
-python .\filter.py --check
-python .\filter.py --batch-id 20260922171715
-```
-
-Preview and apply an approved batch:
-
-```powershell
-python .\backfill.py --input .\filter\filter-20260922171715.xlsx --dry-run
-python .\backfill.py --input .\filter\filter-20260922171715.xlsx
-```
-
-For behavior changes, run the unit tests and then run the normalizer against representative files in `raw/`; inspect formulas and calculated values in the generated workbooks.
+The commands require Windows and Microsoft Excel. `normalize` and `filter` use Excel COM; `backfill --dry-run` never saves raw files.
 
 ## Coding Style and Naming
 
-- Use Python 3.10+ syntax, four-space indentation, and clear type annotations where practical.
-- Prefer small functions with explicit inputs and meaningful error messages.
-- Keep user-editable behavior in `norm.json`; avoid hard-coding paths, sheet names, or business formulas in Python.
-- Add or modify a shop through `sources.shops`; select a per-shop rule with `rule` instead of branching on the shop name in Python.
-- Add backfill permissions only through `filter.json` `backfill.fields`; never infer writable fields from the filter workbook.
-- Preserve Chinese source field names exactly when they are used as configuration keys.
-- Use `snake_case` for Python functions and variables; use descriptive JSON keys.
+- Use Python 3.10+, four-space indentation, type annotations where practical, and `snake_case` names.
+- Keep shared behavior in `src/jdwork/excel.py` and `src/jdwork/config.py`; avoid copying COM or path logic between commands.
+- Prefer reuse (Don't Repeat Yourself). Apply the Boy Scout Rule: leave touched code clearer, remove stale imports and update nearby docs/tests.
+- Keep business rules, formulas, paths, sheets, and writable fields in JSON configuration.
+- Preserve Chinese source field names exactly when they are configuration keys.
+- Keep CLI behavior in `cli.py`; command modules expose reusable `run` and `check` functions.
 
 ## Testing Guidelines
 
-When changing normalization behavior, verify text fields preserve leading zeros, numeric fields are numeric, formulas remain formulas, and all configured output files are produced. Also test `--check`, safe overwrite behavior, reruns without duplicate columns, and Excel process cleanup after success or failure.
+Test configuration validation, text leading-zero preservation, numeric conversion, formula rendering, filter operators, header-row handling, duplicate-key conflicts, and backfill allowlists. For behavior changes, run unit tests plus `normalize --check` and `filter --check` against representative local files. Validate real backfill writes only against a temporary raw copy.
 
 ## Commit and Pull Request Guidelines
 
-Use concise imperative commit subjects, for example `Add Excel table normalization script`. Keep commits focused on one logical change. Pull requests should describe the affected rules or configuration, list the validation command and result, and mention any Excel or Windows prerequisites. Do not commit files from `raw/`, `norm/`, `filter/`, `docs/`, credentials, or exported customer data.
+Use concise imperative commit subjects, such as `Add jdwork CLI package`. Keep each commit focused. Pull requests should describe changed commands/configuration, list test and Excel validation commands, and mention Windows/Excel prerequisites. Never commit raw exports, generated workbooks, credentials, or customer data.
 
 ## Security and Configuration
 
-Treat workbook contents and any configured passwords as sensitive. Keep credentials out of committed JSON when possible. Do not modify files under `raw/`; generated output belongs under `norm/` and should be reviewed locally before sharing.
+Treat workbook contents and configured passwords as sensitive. Keep credentials out of committed JSON. Only fields listed in `config/filter.json` `backfill.fields` may be written back to raw files. Review the dry-run output before applying a batch.

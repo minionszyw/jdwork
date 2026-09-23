@@ -1,27 +1,19 @@
 from __future__ import annotations
 
-import argparse
-import json
+import gc
 import math
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any, Callable
+
+from .config import read_json, source_path
+from .excel import ExcelRunner, as_tuple, clean_text, headers, require_columns, sheet_for, used_last_row
 
 XL_OPEN_XML_WORKBOOK = 51
 REQUIRED_ERP_SOURCES = ("erp_inventory", "erp_product", "erp_ban", "erp_combo")
 REQUIRED_RULES = ("erp_inventory", "erp_product", "erp_combo")
 FORMULA_SOURCE_NAMES = {*REQUIRED_ERP_SOURCES, "sales"}
-
-
-def clean_text(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value).replace("\r", "").replace("\n", "").strip()
-
 
 def clean_number(value: Any) -> Any:
     if value is None:
@@ -42,11 +34,6 @@ def clean_number(value: Any) -> Any:
     if not math.isfinite(number):
         raise ValueError(f"数字不是有限值: {value!r}")
     return int(number) if number.is_integer() else number
-
-
-def as_tuple(value: Any) -> tuple:
-    return value if isinstance(value, tuple) else (value,)
-
 
 def col_letter(col: int) -> str:
     if col < 1:
@@ -130,96 +117,6 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("配置校验失败:\n- " + "\n- ".join(errors))
 
 
-class ExcelRunner:
-    def __init__(self) -> None:
-        try:
-            import pythoncom
-            import win32com.client as win32
-        except ImportError as exc:
-            raise RuntimeError("缺少 pywin32，请运行: py -m pip install -r requirements.txt") from exc
-        self.pythoncom = pythoncom
-        pythoncom.CoInitialize()
-        try:
-            self.excel = win32.DispatchEx("Excel.Application")
-        except Exception:
-            pythoncom.CoUninitialize()
-            raise
-        self.excel.Visible = False
-        self.excel.DisplayAlerts = False
-        self.excel.ScreenUpdating = False
-        self.excel.EnableEvents = False
-        self.excel.AskToUpdateLinks = False
-        self.open_books: list[Any] = []
-
-    def open(self, path: Path, read_only: bool = True, password: str | None = None):
-        kwargs: dict[str, Any] = {"ReadOnly": read_only, "UpdateLinks": 0, "IgnoreReadOnlyRecommended": True, "AddToMru": False, "Local": True}
-        if password:
-            kwargs["Password"] = password
-        book = self.excel.Workbooks.Open(str(path.resolve()), **kwargs)
-        self.open_books.append(book)
-        return book
-
-    def close(self, book: Any, save: bool = False) -> None:
-        try:
-            book.Close(SaveChanges=save)
-        finally:
-            if book in self.open_books:
-                self.open_books.remove(book)
-
-    def shutdown(self) -> None:
-        for book in reversed(self.open_books):
-            try:
-                book.Close(SaveChanges=False)
-            except Exception:
-                pass
-        try:
-            self.excel.Quit()
-        finally:
-            self.pythoncom.CoUninitialize()
-
-
-def sheet_for(book: Any, requested: str | None, default: str) -> Any:
-    names = [book.Worksheets(i).Name for i in range(1, book.Worksheets.Count + 1)]
-    for name in [item for item in (requested, default) if item]:
-        if name in names:
-            return book.Worksheets(name)
-    for i in range(1, book.Worksheets.Count + 1):
-        ws = book.Worksheets(i)
-        used = ws.UsedRange
-        if used.Rows.Count > 1 and used.Columns.Count > 1:
-            return ws
-    return book.Worksheets(1)
-
-
-def headers(ws: Any, header_row: int) -> tuple[list[str], dict[str, int]]:
-    used = ws.UsedRange
-    first = used.Column
-    last = first + used.Columns.Count - 1
-    values = ws.Range(ws.Cells(header_row, first), ws.Cells(header_row, last)).Value
-    raw = as_tuple(values)
-    if len(raw) == 1 and isinstance(raw[0], tuple):
-        raw = raw[0]
-    result = [clean_text(value) or "" for value in raw]
-    mapping: dict[str, int] = {}
-    for offset, name in enumerate(result):
-        if not name:
-            continue
-        if name in mapping:
-            raise ValueError(f"工作表 {ws.Name!r} 存在重复表头: {name}")
-        mapping[name] = first + offset
-    return result, mapping
-
-
-def require_columns(mapping: dict[str, int], columns: list[str], label: str) -> None:
-    missing = [name for name in columns if name not in mapping]
-    if missing:
-        raise ValueError(f"{label} 缺少字段: {', '.join(missing)}")
-
-
-def used_last_row(ws: Any, header_row: int) -> int:
-    used = ws.UsedRange
-    return max(header_row, used.Row + used.Rows.Count - 1)
-
 
 def set_column_values(ws: Any, col: int, first_row: int, last_row: int, converter: Callable[[Any], Any], field: str) -> None:
     if last_row < first_row:
@@ -240,7 +137,7 @@ def set_number_format(ws: Any, col: int, first: int, last: int, value: str, fiel
     try:
         ws.Range(ws.Cells(first, col), ws.Cells(last, col)).NumberFormat = value
     except Exception as exc:
-        print(f"警告: 无法设置 {ws.Name}!{field} 的格式 {value!r}: {exc}", file=sys.stderr)
+        print(f"警告: 无法设置 {ws.Name}!{field} 的格式 {value!r}: {exc}")
 
 
 def format_columns(ws: Any, mapping: dict[str, int], rule: dict[str, Any], first: int, last: int) -> None:
@@ -318,12 +215,6 @@ def write_formulas(ws: Any, mapping: dict[str, int], rules: list[dict[str, Any]]
             set_number_format(ws, col, first, last, rule["number_format"], name)
 
 
-def source_path(root: Path, item: dict[str, Any] | str, key: str = "file") -> Path:
-    value = item[key] if isinstance(item, dict) else item
-    path = Path(value)
-    return path if path.is_absolute() else root / path
-
-
 def actual_sheet_name(runner: ExcelRunner, path: Path, requested: str | None, default: str, password: str | None = None) -> str:
     book = runner.open(path, read_only=True, password=password)
     try:
@@ -332,9 +223,19 @@ def actual_sheet_name(runner: ExcelRunner, path: Path, requested: str | None, de
         runner.close(book, False)
 
 
-def make_sources(raw_dir: Path, norm_dir: Path, sources: dict[str, Any], shop: dict[str, Any] | None, default_sheet: str) -> dict[str, str]:
+def make_sources(
+    raw_dir: Path,
+    norm_dir: Path,
+    sources: dict[str, Any],
+    shop: dict[str, Any] | None,
+    default_sheet: str,
+    exclude: set[str] | None = None,
+) -> dict[str, str]:
     refs: dict[str, str] = {}
+    excluded = exclude or set()
     for name in REQUIRED_ERP_SOURCES:
+        if name in excluded:
+            continue
         item = sources[name]
         root = norm_dir if item.get("output") else raw_dir
         filename = item.get("output") or item["file"]
@@ -368,9 +269,12 @@ def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, sourc
         try:
             runner.excel.CalculateFullRebuild()
         except Exception as exc:
-            print(f"警告: Excel 全量重算失败: {exc}", file=sys.stderr)
+            print(f"警告: Excel 全量重算失败: {exc}")
         book.SaveAs(str(temporary.resolve()), FileFormat=XL_OPEN_XML_WORKBOOK)
         runner.close(book, False)
+        book = None
+        ws = None
+        gc.collect()
         closed = True
         try:
             os.replace(temporary, output_path)
@@ -444,8 +348,7 @@ def check_inputs(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], ru
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8-sig") as handle:
-        config = json.load(handle)
+    config = read_json(path)
     validate_config(config)
     return config
 
@@ -483,7 +386,14 @@ def run(config_path: Path) -> None:
         for name in ("erp_inventory", "erp_product", "erp_combo"):
             item = sources[name]
             output = item.get("output", fixed_outputs[name])
-            refs = {} if name == "erp_inventory" else make_sources(raw_dir, norm_dir, sources, None, defaults["default_sheet"])
+            refs = {} if name == "erp_inventory" else make_sources(
+                raw_dir,
+                norm_dir,
+                sources,
+                None,
+                defaults["default_sheet"],
+                {name},
+            )
             process_file(runner, source_path(raw_dir, item), source_path(norm_dir, output), item, rules[name], defaults, refs)
         for configured_shop in sources.get("shops", []):
             if not configured_shop.get("enabled", True):
@@ -501,19 +411,3 @@ def run(config_path: Path) -> None:
         runner.shutdown()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="通过 Excel COM 将 raw 表格标准化到 norm")
-    parser.add_argument("-c", "--config", default="norm.json", help="配置文件路径")
-    parser.add_argument("--check", action="store_true", help="只检查配置和输入，不生成输出")
-    args = parser.parse_args()
-    try:
-        config_path = Path(args.config).resolve()
-        check(config_path) if args.check else run(config_path)
-        return 0
-    except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

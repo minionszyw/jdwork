@@ -1,232 +1,84 @@
-# 表格标准化脚本
+# jdwork
 
-`norm.py` 使用 Windows Excel COM 读取 ERP 和店铺后台导出的 `.xlsx`、`.csv` 文件，将原始数据标准化后保存到 `norm` 目录，并保留 Excel 查找和计算公式。
+`jdwork` 将 ERP 和店铺后台导出的 Excel/CSV 表格标准化、筛选并回填。表格通过 Windows Excel COM 读取，因此支持加密或格式不规范的工作簿，并保留标准化输出中的 Excel 公式。
 
-## 运行环境
+## 环境与安装
 
 - Windows
-- 已安装 Microsoft Excel
-- Python 3.10 或更高版本
-- 原始表格放在 `raw` 目录
+- Microsoft Excel
+- Python 3.10+
 
-Excel COM 是脚本读取加密或非标准 XLSX 文件的必要条件。`openpyxl` 不参与表格读写。
-
-## 安装依赖
-
-在 PowerShell 中执行：
+在仓库根目录执行本地安装（也可使用 `pipx install .`）：
 
 ```powershell
-py -m pip install -r .\requirements.txt
+py -m pip install .
 ```
 
-如果系统中有多个 Python，建议使用运行脚本的同一个解释器安装：
+开发时使用可编辑安装：
 
 ```powershell
-python -m pip install -r .\requirements.txt
+py -m pip install -e .
 ```
 
-## 目录结构
+## 目录
 
 ```text
-.
-├── norm.py
-├── norm.json
-├── requirements.txt
-├── raw\       # ERP/店铺后台导出的原始文件
-└── norm\      # 脚本生成的标准化文件
+config/          # norm.json、filter.json
+raw/             # ERP/店铺导出的原始表（不提交 Git）
+norm/            # 标准化结果（不提交 Git）
+filter/          # 筛选批次（不提交 Git）
+src/jdwork/      # CLI 和业务模块
+tests/           # 不依赖 Excel 的单元测试
 ```
 
-脚本每次都从 `raw` 重新生成输出，不会把上一次输出再次作为输入处理。
+`config/` 中的相对路径以各自配置文件所在目录为基准，因此项目目录下的数据路径写为 `../raw`、`../norm`、`../filter`。
 
-## 使用步骤
+## 闭环使用
 
-1. 从 ERP 或店铺后台导出表格。
-2. 按 `norm.json` 中的文件名重命名，并保存到 `raw`。
-3. 根据实际工作表名、路径或公式修改 `norm.json`。
-4. 关闭正在编辑这些文件的 Excel 窗口。
-5. 在项目目录执行：
+1. 按 `config/norm.json` 重命名 ERP/店铺导出的 `.xlsx` 或 `.csv`，放入 `raw/`。
+2. 标准化：
 
    ```powershell
-   py .\norm.py --config .\norm.json
+   jdw normalize
+   jdw normalize --check
    ```
 
-6. 在 `norm` 目录查看结果。
+3. 按 `config/filter.json` 筛选：
 
-运行前只检查配置、文件、工作表和字段，不生成输出：
+   ```powershell
+   jdw filter
+   jdw filter --check
+   ```
 
-```powershell
-py .\norm.py --check --config .\norm.json
-```
+   输出为 `filter/filter-{batch_id}.xlsx`，可用 `--batch-id 20260923150000` 指定批次号。
+4. 人工修改筛选表后先预览回填，再应用：
 
-## 配置说明
+   ```powershell
+   jdw backfill --input .\filter\filter-20260923150000.xlsx --dry-run
+   jdw backfill --input .\filter\filter-20260923150000.xlsx
+   ```
 
-### 路径
+回填只允许写入 `config/filter.json` 的 `backfill.fields`，默认按 `店铺 + SKUID` 定位并用 `货号` 校验。写入前会创建 `.bak` 备份。不要在 Excel 中打开正在处理的文件。
 
-```json
-{
-  "paths": {
-    "raw": "raw",
-    "norm": "norm"
-  }
-}
-```
+## 配置维护
 
-路径可以是相对路径或绝对路径。相对路径以 `norm.json` 所在目录为基准。
+- 在 `sources.shops` 增删店铺；设置 `enabled: false` 可停用。
+- 在 `rules` 配置文本、数字、查找和计算字段；公式支持 `{this:字段}`、`{range:字段}`、`{source:别名}`。
+- 在 `filter.json.filters` 配置条件和 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。
+- 只把允许人工修改的字段加入 `backfill.fields`，不要加入公式列、`店铺` 或 `类型`。
 
-### 数据源
-
-`sources` 定义 ERP 文件和店铺文件：
-
-- `erp_inventory`：ERP 库存表
-- `erp_product`：ERP 商品表
-- `erp_ban`：ERP 禁售/控价表
-- `erp_combo`：ERP 组合商品表
-- `shops`：店铺商品表和销售表
-
-工作表名可以配置；如果配置的工作表不存在，脚本会优先使用 `Sheet1`，再选择第一个非空工作表。
-
-店铺示例：
-
-```json
-{
-  "name": "百济林",
-  "product": "百济林商品.xlsx",
-  "product_sheet": "0",
-  "sales": "百济林销售.xlsx",
-  "sales_sheet": "Sheet1",
-  "enabled": true
-}
-```
-
-将 `enabled` 设置为 `false` 可以跳过某个店铺。
-
-店铺默认使用 `shop_product` 规则。需要不同字段或公式时，在 `rules` 中复制一份规则并修改店铺的 `rule`；删除店铺配置即可停止处理。停用或删除店铺不会自动删除已有的 `norm` 输出文件，脚本会提示旧文件仍然存在。
-
-ERP 数据源可以配置 `output` 和 `reference_range`，店铺销售源可以配置 `sales_reference_range`，避免把工作表列范围写死在 Python 中。
-
-### 字段格式
-
-- `text_columns`：清理空格和制表符后按文本写入，保留前导零。
-- `number_columns`：转换为数字，`null`、`--` 等空值会写为空单元格。
-- `lookups`：配置 Excel 查找公式。
-- `calculations`：配置 Excel 计算公式。
-- `number_format`：可选的 Excel 显示格式，例如 `0.0%`。
-
-公式模板支持：
-
-- `{this:字段名}`：当前行字段单元格，例如 `A2`。
-- `{range:字段名}`：当前输出表的动态字段范围。
-- `{source:别名}`：配置的数据源外部引用。
-
-示例：
-
-```json
-{
-  "column": "毛利额",
-  "formula": "={this:京东价}-{this:SKU进价}"
-}
-```
-
-脚本不会自动修改公式中的缺失值行为。是否使用 `IFERROR` 由配置的公式模板决定。
-
-## 输出规则
-
-脚本按以下顺序处理：
-
-1. ERP 库存
-2. ERP 商品
-3. ERP 组合商品
-4. 各店铺商品表
-
-销售表只作为店铺商品表的查找源，不会单独生成到 `norm`。
-
-输出文件统一为 `.xlsx`。CSV 输入会通过 Excel COM 打开后另存为 XLSX。
-
-公式写入后，脚本会请求 Excel 重新计算并保存缓存结果，因此打开输出文件时既能看到公式，也能看到计算值。
-
-## 当前标准化字段
-
-### ERP 库存
-
-- `商品代码`：文本
-
-### ERP 商品
-
-- 查找：`可用数量(A - B - C - D)`、`B2C控价金额`、`B2C是否禁售`
-
-### ERP 组合
-
-- 文本：`组合商品代码`、`商品代码`
-- 数字：`数量`
-- 查找：`进价`、`可用数量(A - B - C - D)`
-- 计算：`组合进价`、`组合可用数量`、`单品可拼套数`、`单品进价小计`
-
-### 店铺商品
-
-- 文本：`商家SKU`、`货号`
-- 数字：`京东价`、`商品总库存`、`商品可用库存`
-- 查找：`进价`、`可用数量(A - B - C - D)`、`B2C控价金额`、`B2C是否禁售`、`SKU进价`、`SKU可用数量`、`商品访客数`、`成交金额`、`成交客户数`
-- 计算：`毛利额`、`毛利率`
-
-## 常见问题
-
-### 提示找不到 `win32com`
-
-重新安装依赖：
+显式配置路径会覆盖默认值：
 
 ```powershell
-py -m pip install --upgrade -r .\requirements.txt
+jdw normalize --config .\config\norm.json
+jdw filter --config .\config\filter.json
 ```
 
-### Excel 进程占用文件
-
-关闭手动打开的 Excel 文件后重试。脚本运行期间不要编辑 `raw` 或 `norm` 中的同名文件。
-
-### 查找结果为 `#N/A`
-
-检查以下内容：
-
-- 查找键两边是否使用了相同的文本格式。
-- 原始编码是否包含不可见空格或制表符。
-- `norm.json` 中的工作表名是否正确。
-- 公式是否需要增加 `IFERROR`。
-
-### 修改了 `raw` 文件名
-
-同步修改 `norm.json` 中对应的 `file` 配置，再重新运行脚本。
-
-### 检查配置失败
-
-先运行 `py .\norm.py --check`。该命令会报告缺少文件、重复店铺、重复输出、未知规则和公式字段错误，但不会修改 `norm`。
-
-## 开发测试
-
-运行不依赖 Excel 的纯逻辑测试：
+## 开发验证
 
 ```powershell
 python -m unittest discover -s tests -v
+python -m compileall -q src\jdwork
 ```
 
-## 筛选和回填
-
-`filter.py` 根据 `filter.json` 对启用店铺的 `norm/*商品.xlsx` 执行筛选，输出到 `filter/filter-{batch_id}.xlsx`：
-
-```powershell
-py .\filter.py --check
-py .\filter.py --batch-id 20260922171715
-```
-
-筛选文件会增加 `店铺` 和 `类型` 两列，并保留标准化商品表字段。一条商品命中多个规则时会输出多行。
-
-`backfill.py` 按 `店铺 + SKUID` 定位 raw 商品表，`货号`用于一致性校验，只回填 `filter.json` 中 `backfill.fields` 明确列出的字段：
-
-```powershell
-py .\backfill.py --input .\filter\filter-20260922171715.xlsx --dry-run
-py .\backfill.py --input .\filter\filter-20260922171715.xlsx
-```
-
-默认只回填 `商品状态`。回填前会为 raw 文件创建 `.bak` 备份；筛选结果、`raw` 和 `norm` 均不进入 Git。
-
-## 安全提示
-
-脚本会覆盖 `norm` 目录中同名输出文件，但不会修改 `raw` 原始文件。运行前如需保留旧结果，请先复制 `norm` 目录。
+真实 Excel 验证建议依次执行 `jdw normalize --check`、`jdw filter --check` 和 `jdw backfill --dry-run`。不要提交 `raw/`、`norm/`、`filter/`、`docs/` 或客户数据。

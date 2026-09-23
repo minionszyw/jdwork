@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import argparse
-import json
-import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
-import filter as filter_module
-import norm
+from .config import read_json, source_path
+from . import filtering as filter_module
+from . import normalize as norm
 
 
-def read_filter_rows(runner: norm.ExcelRunner, path: Path, sheet: str | None) -> tuple[Any, list[str], list[dict[str, Any]]]:
-    book, _, headers, rows = filter_module.read_sheet(runner, path, sheet, "Sheet1")
+def read_filter_rows(runner: norm.ExcelRunner, path: Path, sheet: str | None, header_row: int = 1) -> tuple[Any, list[str], list[dict[str, Any]]]:
+    book, _, headers, rows = filter_module.read_sheet(runner, path, sheet, "Sheet1", header_row)
     return book, headers, rows
 
 
@@ -43,13 +40,13 @@ def merge_verification(changes: dict[tuple[str, str], dict[str, Any]], row: dict
 
 
 def load_backfill_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path]:
-    with path.open("r", encoding="utf-8-sig") as handle:
-        config = json.load(handle)
+    config = read_json(path)
     filter_module.validate_filter_config(config)
     base = path.parent.resolve()
-    norm_path = norm.source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
+    norm_path = source_path(base, config.get("paths", {}).get("norm_config", "norm.json"))
     norm_config = norm.load_config(norm_path)
-    raw_dir = norm.source_path(norm_path.parent.resolve(), norm_config.get("paths", {}).get("raw", "raw")).resolve()
+    filter_module.validate_backfill_fields(config, norm_config)
+    raw_dir = source_path(norm_path.parent.resolve(), norm_config.get("paths", {}).get("raw", "raw")).resolve()
     return config, norm_config, raw_dir
 
 
@@ -62,7 +59,7 @@ def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], h
     key_col = mapping[key]
     verify_cols = {field: mapping[field] for field in verify}
     values = ws.Range(ws.Cells(header_row + 1, 1), ws.Cells(last, max(mapping.values()))).Value
-    rows = filter_module.values_from_range(values)
+    rows = filter_module.values_from_range(values, last - header_row, max(mapping.values()))
     result: dict[str, int] = {}
     checks: dict[str, dict[str, Any]] = {}
     for offset, values_row in enumerate(rows):
@@ -79,7 +76,7 @@ def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], h
 
 
 def process_store(runner: norm.ExcelRunner, raw_dir: Path, shop: dict[str, Any], updates: dict[str, Any], verify_fields: list[str], dry_run: bool, backup: bool, header_row: int) -> int:
-    raw_path = norm.source_path(raw_dir, shop, "product")
+    raw_path = source_path(raw_dir, shop, "product")
     book = runner.open(raw_path, read_only=dry_run, password=shop.get("product_password"))
     try:
         ws = norm.sheet_for(book, shop.get("product_sheet"), "Sheet1")
@@ -135,7 +132,12 @@ def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
         raise ValueError("backfill.fields 不能为空")
     runner = norm.ExcelRunner()
     try:
-        book, headers, rows = read_filter_rows(runner, input_path, config.get("output", {}).get("sheet"))
+        book, headers, rows = read_filter_rows(
+            runner,
+            input_path,
+            config.get("output", {}).get("sheet"),
+            int(config.get("output", {}).get("header_row", 1)),
+        )
         try:
             required = ["店铺", "类型", "SKUID", *verify_fields, *fields]
             missing = [field for field in required if field not in headers]
@@ -155,27 +157,10 @@ def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
                 raise ValueError(f"norm.json 中找不到店铺: {shop}")
             grouped.setdefault(shop, {})[skuid] = update
         total = 0
+        raw_header_row = int(norm_config.get("excel", {}).get("header_row", 1))
         for shop_name, updates in grouped.items():
-            total += process_store(runner, raw_dir, shops[shop_name], updates, verify_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), int(config.get("excel", {}).get("header_row", 1)))
+            total += process_store(runner, raw_dir, shops[shop_name], updates, verify_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
         print(f"{'预览' if dry_run else '回填'}完成，共 {total} 个字段变更")
         return total
     finally:
         runner.shutdown()
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="将筛选文件中的允许字段回填到 raw 店铺商品表")
-    parser.add_argument("-c", "--config", default="filter.json")
-    parser.add_argument("-i", "--input", required=True, help="filter/filter-{batch_id}.xlsx")
-    parser.add_argument("--dry-run", action="store_true", help="只预览变更，不保存 raw")
-    args = parser.parse_args()
-    try:
-        run(Path(args.config).resolve(), Path(args.input).resolve(), args.dry_run)
-        return 0
-    except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
