@@ -9,16 +9,16 @@
     "overwrite": true
   },
   "sources": {
-    "erp_inventory": {"file": "ERP库存.csv", "sheet": "ERP库存"},
-    "erp_product": {"file": "ERP商品.xlsx", "sheet": "Sheet1"},
-    "erp_ban": {"file": "ERP禁售.xlsx", "sheet": "Sheet1"},
-    "erp_combo": {"file": "ERP组合.csv", "sheet": "ERP组合"},
+    "erp_inventory": {"file": "ERP库存.csv", "sheet": "ERP库存", "output": "ERP库存.xlsx", "reference_range": "$A:$J"},
+    "erp_product": {"file": "ERP商品.xlsx", "sheet": "Sheet1", "output": "ERP商品.xlsx", "reference_range": "$A:$M"},
+    "erp_ban": {"file": "ERP禁售.xlsx", "sheet": "Sheet1", "reference_range": "$A:$H"},
+    "erp_combo": {"file": "ERP组合.csv", "sheet": "ERP组合", "output": "ERP组合.xlsx", "reference_range": "$A:$U"},
     "shops": [
-      {"name": "百济林", "product": "百济林商品.xlsx", "product_sheet": "0", "sales": "百济林销售.xlsx", "sales_sheet": "Sheet1"},
-      {"name": "济喜堂", "product": "济喜堂商品.xlsx", "product_sheet": "0", "sales": "济喜堂销售.xlsx"},
-      {"name": "京喜", "product": "京喜商品.xlsx", "product_sheet": "0", "sales": "京喜销售.xlsx"},
-      {"name": "养颂和", "product": "养颂和商品.xlsx", "product_sheet": "0", "sales": "养颂和销售.xlsx"},
-      {"name": "易康民", "product": "易康民商品.xlsx", "product_sheet": "0", "sales": "易康民销售.xlsx"}
+      {"name": "百济林", "product": "百济林商品.xlsx", "product_sheet": "0", "sales": "百济林销售.xlsx", "sales_sheet": "Sheet1", "rule": "shop_product", "sales_reference_range": "$B:$T"},
+      {"name": "济喜堂", "product": "济喜堂商品.xlsx", "product_sheet": "0", "sales": "济喜堂销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
+      {"name": "京喜", "product": "京喜商品.xlsx", "product_sheet": "0", "sales": "京喜销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
+      {"name": "养颂和", "product": "养颂和商品.xlsx", "product_sheet": "0", "sales": "养颂和销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
+      {"name": "易康民", "product": "易康民商品.xlsx", "product_sheet": "0", "sales": "易康民销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"}
     ]
   },
   "rules": {

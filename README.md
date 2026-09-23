@@ -52,6 +52,12 @@ python -m pip install -r .\requirements.txt
 
 6. 在 `norm` 目录查看结果。
 
+运行前只检查配置、文件、工作表和字段，不生成输出：
+
+```powershell
+py .\norm.py --check --config .\norm.json
+```
+
 ## 配置说明
 
 ### 路径
@@ -93,6 +99,10 @@ python -m pip install -r .\requirements.txt
 ```
 
 将 `enabled` 设置为 `false` 可以跳过某个店铺。
+
+店铺默认使用 `shop_product` 规则。需要不同字段或公式时，在 `rules` 中复制一份规则并修改店铺的 `rule`；删除店铺配置即可停止处理。停用或删除店铺不会自动删除已有的 `norm` 输出文件，脚本会提示旧文件仍然存在。
+
+ERP 数据源可以配置 `output` 和 `reference_range`，店铺销售源可以配置 `sales_reference_range`，避免把工作表列范围写死在 Python 中。
 
 ### 字段格式
 
@@ -184,6 +194,18 @@ py -m pip install --upgrade -r .\requirements.txt
 ### 修改了 `raw` 文件名
 
 同步修改 `norm.json` 中对应的 `file` 配置，再重新运行脚本。
+
+### 检查配置失败
+
+先运行 `py .\norm.py --check`。该命令会报告缺少文件、重复店铺、重复输出、未知规则和公式字段错误，但不会修改 `norm`。
+
+## 开发测试
+
+运行不依赖 Excel 的纯逻辑测试：
+
+```powershell
+python -m unittest discover -s tests -v
+```
 
 ## 安全提示
 

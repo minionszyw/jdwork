@@ -3,17 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
-
-import pythoncom
-import win32com.client as win32
-
+from typing import Any, Callable
 
 XL_OPEN_XML_WORKBOOK = 51
-XL_CALC_AUTOMATIC = -4105
+REQUIRED_ERP_SOURCES = ("erp_inventory", "erp_product", "erp_ban", "erp_combo")
+REQUIRED_RULES = ("erp_inventory", "erp_product", "erp_combo")
+FORMULA_SOURCE_NAMES = {*REQUIRED_ERP_SOURCES, "sales"}
 
 
 def clean_text(value: Any) -> Any:
@@ -25,50 +24,135 @@ def clean_text(value: Any) -> Any:
 
 
 def clean_number(value: Any) -> Any:
-    if value is None or isinstance(value, bool):
+    if value is None:
         return None
+    if isinstance(value, bool):
+        raise ValueError("布尔值不是有效数字")
     if isinstance(value, (int, float)):
-        return value if not isinstance(value, float) or math.isfinite(value) else None
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("数字不是有限值")
+        return value
     text = clean_text(value)
     if not text or text.lower() in {"null", "none", "--", "-"}:
         return None
-    text = text.replace(",", "")
     try:
-        number = float(text)
-        return int(number) if number.is_integer() else number
-    except ValueError:
-        return value
+        number = float(text.replace(",", ""))
+    except ValueError as exc:
+        raise ValueError(f"无法转换为数字: {value!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"数字不是有限值: {value!r}")
+    return int(number) if number.is_integer() else number
 
 
 def as_tuple(value: Any) -> tuple:
-    if isinstance(value, tuple):
-        return value
-    return (value,)
+    return value if isinstance(value, tuple) else (value,)
+
+
+def col_letter(col: int) -> str:
+    if col < 1:
+        raise ValueError("列号必须大于 0")
+    result = ""
+    while col:
+        col, rem = divmod(col - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def rule_fields(rule: dict[str, Any]) -> list[str]:
+    return [item["column"] for item in rule.get("lookups", []) + rule.get("calculations", [])]
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    errors: list[str] = []
+    sources = config.get("sources")
+    rules = config.get("rules")
+    if not isinstance(sources, dict):
+        raise ValueError("配置缺少对象 sources")
+    if not isinstance(rules, dict):
+        raise ValueError("配置缺少对象 rules")
+    for name in REQUIRED_ERP_SOURCES:
+        item = sources.get(name)
+        if not isinstance(item, dict) or not item.get("file"):
+            errors.append(f"sources.{name} 必须配置 file")
+        if name in REQUIRED_RULES and name not in rules:
+            errors.append(f"rules 缺少 {name}")
+    seen_names: set[str] = set()
+    seen_outputs: set[str] = set()
+    shops = sources.get("shops", [])
+    if not isinstance(shops, list):
+        errors.append("sources.shops 必须是数组")
+        shops = []
+    for index, shop in enumerate(shops):
+        prefix = f"sources.shops[{index}]"
+        if not isinstance(shop, dict):
+            errors.append(f"{prefix} 必须是对象")
+            continue
+        for key in ("name", "product", "sales"):
+            if not shop.get(key):
+                errors.append(f"{prefix} 缺少 {key}")
+        name = str(shop.get("name", ""))
+        if name in seen_names:
+            errors.append(f"店铺名称重复: {name}")
+        seen_names.add(name)
+        selected_rule = shop.get("rule", "shop_product")
+        if selected_rule not in rules:
+            errors.append(f"店铺 {name!r} 引用了不存在的规则 {selected_rule!r}")
+        output = shop.get("output") or f"{Path(str(shop.get('product', 'unknown'))).stem}.xlsx"
+        if output in seen_outputs:
+            errors.append(f"店铺输出文件重复: {output}")
+        seen_outputs.add(output)
+    for name, rule in rules.items():
+        if not isinstance(rule, dict):
+            errors.append(f"rules.{name} 必须是对象")
+            continue
+        for list_name in ("text_columns", "number_columns", "lookups", "calculations"):
+            if list_name in rule and not isinstance(rule[list_name], list):
+                errors.append(f"rules.{name}.{list_name} 必须是数组")
+        fields = rule_fields(rule)
+        duplicates = sorted({field for field in fields if fields.count(field) > 1})
+        if duplicates:
+            errors.append(f"rules.{name} 公式字段重复: {', '.join(duplicates)}")
+        ordered = rule.get("output_columns")
+        if ordered is not None:
+            if len(ordered) != len(set(ordered)):
+                errors.append(f"rules.{name}.output_columns 存在重复字段")
+            if set(ordered) != set(fields):
+                errors.append(f"rules.{name}.output_columns 必须与公式字段一致")
+        for formula_rule in rule.get("lookups", []) + rule.get("calculations", []):
+            if not isinstance(formula_rule, dict) or not formula_rule.get("column") or not formula_rule.get("formula"):
+                errors.append(f"rules.{name} 中每条公式必须包含 column 和 formula")
+                continue
+            aliases = re.findall(r"\{source:([^{}]+)\}", formula_rule["formula"])
+            unknown = sorted(set(aliases) - FORMULA_SOURCE_NAMES)
+            if unknown:
+                errors.append(f"rules.{name}.{formula_rule['column']} 使用未知数据源: {', '.join(unknown)}")
+    if errors:
+        raise ValueError("配置校验失败:\n- " + "\n- ".join(errors))
 
 
 class ExcelRunner:
     def __init__(self) -> None:
+        try:
+            import pythoncom
+            import win32com.client as win32
+        except ImportError as exc:
+            raise RuntimeError("缺少 pywin32，请运行: py -m pip install -r requirements.txt") from exc
+        self.pythoncom = pythoncom
         pythoncom.CoInitialize()
-        self.excel = win32.DispatchEx("Excel.Application")
+        try:
+            self.excel = win32.DispatchEx("Excel.Application")
+        except Exception:
+            pythoncom.CoUninitialize()
+            raise
         self.excel.Visible = False
         self.excel.DisplayAlerts = False
         self.excel.ScreenUpdating = False
         self.excel.EnableEvents = False
         self.excel.AskToUpdateLinks = False
-        try:
-            self.excel.Calculation = XL_CALC_AUTOMATIC
-        except Exception:
-            pass
         self.open_books: list[Any] = []
 
     def open(self, path: Path, read_only: bool = True, password: str | None = None):
-        kwargs = {
-            "ReadOnly": read_only,
-            "UpdateLinks": 0,
-            "IgnoreReadOnlyRecommended": True,
-            "AddToMru": False,
-            "Local": True,
-        }
+        kwargs: dict[str, Any] = {"ReadOnly": read_only, "UpdateLinks": 0, "IgnoreReadOnlyRecommended": True, "AddToMru": False, "Local": True}
         if password:
             kwargs["Password"] = password
         book = self.excel.Workbooks.Open(str(path.resolve()), **kwargs)
@@ -91,32 +175,31 @@ class ExcelRunner:
         try:
             self.excel.Quit()
         finally:
-            pythoncom.CoUninitialize()
+            self.pythoncom.CoUninitialize()
 
 
 def sheet_for(book: Any, requested: str | None, default: str) -> Any:
     names = [book.Worksheets(i).Name for i in range(1, book.Worksheets.Count + 1)]
-    candidates = [x for x in (requested, default) if x]
-    for name in candidates:
+    for name in [item for item in (requested, default) if item]:
         if name in names:
             return book.Worksheets(name)
     for i in range(1, book.Worksheets.Count + 1):
         ws = book.Worksheets(i)
-        ur = ws.UsedRange
-        if ur.Rows.Count > 1 and ur.Columns.Count > 1:
+        used = ws.UsedRange
+        if used.Rows.Count > 1 and used.Columns.Count > 1:
             return ws
     return book.Worksheets(1)
 
 
 def headers(ws: Any, header_row: int) -> tuple[list[str], dict[str, int]]:
-    ur = ws.UsedRange
-    first = ur.Column
-    last = first + ur.Columns.Count - 1
+    used = ws.UsedRange
+    first = used.Column
+    last = first + used.Columns.Count - 1
     values = ws.Range(ws.Cells(header_row, first), ws.Cells(header_row, last)).Value
     raw = as_tuple(values)
     if len(raw) == 1 and isinstance(raw[0], tuple):
         raw = raw[0]
-    result = [clean_text(x) or "" for x in raw]
+    result = [clean_text(value) or "" for value in raw]
     mapping: dict[str, int] = {}
     for offset, name in enumerate(result):
         if not name:
@@ -128,52 +211,49 @@ def headers(ws: Any, header_row: int) -> tuple[list[str], dict[str, int]]:
 
 
 def require_columns(mapping: dict[str, int], columns: list[str], label: str) -> None:
-    missing = [x for x in columns if x not in mapping]
+    missing = [name for name in columns if name not in mapping]
     if missing:
         raise ValueError(f"{label} 缺少字段: {', '.join(missing)}")
 
 
 def used_last_row(ws: Any, header_row: int) -> int:
-    ur = ws.UsedRange
-    return max(header_row, ur.Row + ur.Rows.Count - 1)
+    used = ws.UsedRange
+    return max(header_row, used.Row + used.Rows.Count - 1)
 
 
-def set_column_values(ws: Any, col: int, first_row: int, last_row: int, fn) -> None:
+def set_column_values(ws: Any, col: int, first_row: int, last_row: int, converter: Callable[[Any], Any], field: str) -> None:
     if last_row < first_row:
         return
     values = ws.Range(ws.Cells(first_row, col), ws.Cells(last_row, col)).Value
-    rows = as_tuple(values)
-    out = []
-    for row in rows:
-        value = row[0] if isinstance(row, tuple) else row
-        out.append((fn(value),))
-    ws.Range(ws.Cells(first_row, col), ws.Cells(last_row, col)).Value = tuple(out)
-
-
-def format_columns(ws: Any, mapping: dict[str, int], text_cols: list[str], number_cols: list[str], first: int, last: int) -> None:
-    require_columns(mapping, text_cols + number_cols, ws.Name)
-    for name in text_cols:
-        col = mapping[name]
+    output = []
+    for offset, item in enumerate(as_tuple(values)):
+        value = item[0] if isinstance(item, tuple) else item
         try:
-            ws.Range(ws.Cells(first, col), ws.Cells(last, col)).NumberFormat = "@"
-        except Exception:
-            pass
-        set_column_values(ws, col, first, last, clean_text)
-    for name in number_cols:
+            converted = converter(value)
+        except ValueError as exc:
+            raise ValueError(f"{ws.Name}!{field} 第 {first_row + offset} 行: {exc}") from exc
+        output.append((converted,))
+    ws.Range(ws.Cells(first_row, col), ws.Cells(last_row, col)).Value = tuple(output)
+
+
+def set_number_format(ws: Any, col: int, first: int, last: int, value: str, field: str) -> None:
+    try:
+        ws.Range(ws.Cells(first, col), ws.Cells(last, col)).NumberFormat = value
+    except Exception as exc:
+        print(f"警告: 无法设置 {ws.Name}!{field} 的格式 {value!r}: {exc}", file=sys.stderr)
+
+
+def format_columns(ws: Any, mapping: dict[str, int], rule: dict[str, Any], first: int, last: int) -> None:
+    text_columns = rule.get("text_columns", [])
+    number_columns = rule.get("number_columns", [])
+    require_columns(mapping, text_columns + number_columns, ws.Name)
+    for name in text_columns:
         col = mapping[name]
-        set_column_values(ws, col, first, last, clean_number)
-        try:
-            ws.Range(ws.Cells(first, col), ws.Cells(last, col)).NumberFormat = "General"
-        except Exception:
-            pass
-
-
-def col_letter(col: int) -> str:
-    result = ""
-    while col:
-        col, rem = divmod(col - 1, 26)
-        result = chr(65 + rem) + result
-    return result
+        set_number_format(ws, col, first, last, "@", name)
+        set_column_values(ws, col, first, last, clean_text, name)
+    for name in number_columns:
+        col = mapping[name]
+        set_column_values(ws, col, first, last, clean_number, name)
 
 
 def external_ref(path: Path, sheet: str, cell_range: str) -> str:
@@ -181,81 +261,67 @@ def external_ref(path: Path, sheet: str, cell_range: str) -> str:
     return f"'{text}'!{cell_range}"
 
 
-def render_formula(template: str, ws: Any, mapping: dict[str, int], row: int, last: int, sources: dict[str, str]) -> str:
-    def this(match):
+def render_formula(template: str, mapping: dict[str, int], row: int, last: int, sources: dict[str, str]) -> str:
+    def current_cell(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in mapping:
             raise ValueError(f"公式引用了不存在的字段: {name}")
         return f"{col_letter(mapping[name])}{row}"
 
-    def rng(match):
+    def current_range(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in mapping:
             raise ValueError(f"公式范围引用了不存在的字段: {name}")
         letter = col_letter(mapping[name])
         return f"${letter}${row}:${letter}${last}"
 
-    formula = re.sub(r"\{this:([^{}]+)\}", this, template)
-    formula = re.sub(r"\{range:([^{}]+)\}", rng, formula)
-    formula = re.sub(r"\{source:([^{}]+)\}", lambda m: sources[m.group(1)], formula)
+    def source(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in sources:
+            raise ValueError(f"公式引用了不可用的数据源: {name}")
+        return sources[name]
+
+    formula = re.sub(r"\{this:([^{}]+)\}", current_cell, template)
+    formula = re.sub(r"\{range:([^{}]+)\}", current_range, formula)
+    formula = re.sub(r"\{source:([^{}]+)\}", source, formula)
+    if re.search(r"\{(?:this|range|source):", formula):
+        raise ValueError(f"公式包含未解析占位符: {formula}")
     return formula
 
 
-def append_rule_columns(ws: Any, mapping: dict[str, int], rules: list[dict[str, Any]], header_row: int, first: int, last: int, sources: dict[str, str]) -> None:
+def reserve_rule_columns(ws: Any, mapping: dict[str, int], rule: dict[str, Any], header_row: int) -> None:
+    formulas = rule.get("lookups", []) + rule.get("calculations", [])
+    by_name = {item["column"]: item for item in formulas}
+    ordered = rule.get("output_columns") or [item["column"] for item in formulas]
     next_col = max(mapping.values(), default=0) + 1
-    for rule in rules:
-        name = rule["column"]
-        if name in mapping:
-            col = mapping[name]
-        else:
-            col = next_col
-            next_col += 1
-            ws.Cells(header_row, col).Value = name
-            mapping[name] = col
-    for rule in rules:
-        name = rule["column"]
-        col = mapping[name]
-        if last < first or "formula" not in rule:
-            continue
-        formula = render_formula(rule["formula"], ws, mapping, first, last, sources)
-        cell = ws.Cells(first, col)
-        cell.Formula = formula
-        if last > first:
-            ws.Range(cell, ws.Cells(last, col)).FillDown()
-        if rule.get("number_format"):
-            try:
-                ws.Range(ws.Cells(first, col), ws.Cells(last, col)).NumberFormat = rule["number_format"]
-            except Exception:
-                pass
-
-
-def reserve_columns(ws: Any, mapping: dict[str, int], rules: list[dict[str, Any]], header_row: int) -> None:
-    next_col = max(mapping.values(), default=0) + 1
-    for rule in rules:
-        name = rule["column"]
+    for name in ordered:
+        if name not in by_name:
+            raise ValueError(f"output_columns 包含未知字段: {name}")
         if name not in mapping:
             ws.Cells(header_row, next_col).Value = name
             mapping[name] = next_col
             next_col += 1
 
 
-def save_as_xlsx(book: Any, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        target.unlink()
-    book.SaveAs(str(target.resolve()), FileFormat=XL_OPEN_XML_WORKBOOK)
+def write_formulas(ws: Any, mapping: dict[str, int], rules: list[dict[str, Any]], first: int, last: int, sources: dict[str, str]) -> None:
+    for rule in rules:
+        if last < first:
+            continue
+        name = rule["column"]
+        col = mapping[name]
+        formula = render_formula(rule["formula"], mapping, first, last, sources)
+        cell = ws.Cells(first, col)
+        cell.Formula = formula
+        if last > first:
+            ws.Range(cell, ws.Cells(last, col)).FillDown()
+        if rule.get("number_format"):
+            set_number_format(ws, col, first, last, rule["number_format"], name)
 
 
-def source_path(base: Path, section: dict[str, Any], key: str, root: Path | None = None) -> Path:
-    item = section[key]
-    path = Path(item["file"] if isinstance(item, dict) else item)
-    return path if path.is_absolute() else (root or base) / path
-
-
-def prepare_book(runner: ExcelRunner, path: Path, sheet_name: str | None, default_sheet: str, password: str | None = None):
-    book = runner.open(path, read_only=False, password=password)
-    ws = sheet_for(book, sheet_name, default_sheet)
-    return book, ws
+def source_path(root: Path, item: dict[str, Any] | str, key: str = "file") -> Path:
+    value = item[key] if isinstance(item, dict) else item
+    path = Path(value)
+    return path if path.is_absolute() else root / path
 
 
 def actual_sheet_name(runner: ExcelRunner, path: Path, requested: str | None, default: str, password: str | None = None) -> str:
@@ -266,99 +332,183 @@ def actual_sheet_name(runner: ExcelRunner, path: Path, requested: str | None, de
         runner.close(book, False)
 
 
-def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, source_cfg: dict[str, Any], rules: dict[str, Any], defaults: dict[str, Any], formula_sources: dict[str, str]) -> None:
-    book, ws = prepare_book(runner, input_path, source_cfg.get("sheet"), defaults["default_sheet"], source_cfg.get("password"))
+def make_sources(raw_dir: Path, norm_dir: Path, sources: dict[str, Any], shop: dict[str, Any] | None, default_sheet: str) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    for name in REQUIRED_ERP_SOURCES:
+        item = sources[name]
+        root = norm_dir if item.get("output") else raw_dir
+        filename = item.get("output") or item["file"]
+        path = source_path(root, filename)
+        refs[name] = external_ref(path, item.get("sheet") or default_sheet, item.get("reference_range", "$A:$XFD"))
+    if shop:
+        sales = source_path(raw_dir, shop, "sales")
+        refs["sales"] = external_ref(sales, shop.get("sales_sheet") or default_sheet, shop.get("sales_reference_range", "$A:$XFD"))
+    return refs
+
+
+def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, source: dict[str, Any], rule: dict[str, Any], defaults: dict[str, Any], formula_sources: dict[str, str]) -> None:
+    if output_path.exists() and not bool(defaults.get("overwrite", True)):
+        raise FileExistsError(f"输出已存在且 overwrite=false: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_name(f".{output_path.stem}.norm-tmp.xlsx")
+    if temporary.exists():
+        temporary.unlink()
+    book = runner.open(input_path, read_only=False, password=source.get("password"))
+    closed = False
     try:
+        ws = sheet_for(book, source.get("sheet"), defaults["default_sheet"])
         header_row = int(defaults.get("header_row", 1))
         _, mapping = headers(ws, header_row)
         first = header_row + 1
         last = used_last_row(ws, header_row)
-        format_columns(ws, mapping, rules.get("text_columns", []), rules.get("number_columns", []), first, last)
-        ordered = rules.get("output_columns")
-        if ordered:
-            all_rules = {rule["column"]: rule for rule in rules.get("lookups", []) + rules.get("calculations", [])}
-            if set(ordered) != set(all_rules):
-                raise ValueError(f"{ws.Name} output_columns 与公式字段不一致")
-            reserve_columns(ws, mapping, [all_rules[name] for name in ordered], header_row)
-        append_rule_columns(ws, mapping, rules.get("lookups", []), header_row, first, last, formula_sources)
-        append_rule_columns(ws, mapping, rules.get("calculations", []), header_row, first, last, formula_sources)
-        runner.excel.CalculateFullRebuild()
-        save_as_xlsx(book, output_path)
+        format_columns(ws, mapping, rule, first, last)
+        reserve_rule_columns(ws, mapping, rule, header_row)
+        write_formulas(ws, mapping, rule.get("lookups", []), first, last, formula_sources)
+        write_formulas(ws, mapping, rule.get("calculations", []), first, last, formula_sources)
+        try:
+            runner.excel.CalculateFullRebuild()
+        except Exception as exc:
+            print(f"警告: Excel 全量重算失败: {exc}", file=sys.stderr)
+        book.SaveAs(str(temporary.resolve()), FileFormat=XL_OPEN_XML_WORKBOOK)
+        runner.close(book, False)
+        closed = True
+        try:
+            os.replace(temporary, output_path)
+        except PermissionError as exc:
+            raise PermissionError(f"无法替换输出文件，请关闭正在打开的 Excel 文件: {output_path}") from exc
         print(f"完成: {input_path.name} -> {output_path.name} ({max(0, last - header_row)} 行)")
+    except Exception:
+        if not closed:
+            runner.close(book, False)
+        if temporary.exists():
+            temporary.unlink()
+        raise
+
+
+def resolve_source_sheets(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], default_sheet: str) -> dict[str, Any]:
+    resolved = dict(sources)
+    for name in REQUIRED_ERP_SOURCES:
+        item = dict(sources[name])
+        item["sheet"] = actual_sheet_name(runner, source_path(raw_dir, item), item.get("sheet"), default_sheet, item.get("password"))
+        resolved[name] = item
+    return resolved
+
+
+def validate_rule_headers(rule_name: str, rule: dict[str, Any], mapping: dict[str, int]) -> None:
+    available = set(mapping) | set(rule_fields(rule))
+    require_columns(mapping, rule.get("text_columns", []) + rule.get("number_columns", []), rule_name)
+    for item in rule.get("lookups", []) + rule.get("calculations", []):
+        fields = re.findall(r"\{(?:this|range):([^{}]+)\}", item["formula"])
+        missing = sorted(set(fields) - available)
+        if missing:
+            raise ValueError(f"规则 {rule_name}.{item['column']} 引用不存在的字段: {', '.join(missing)}")
+
+
+def check_workbook(runner: ExcelRunner, path: Path, item: dict[str, Any], rule_name: str | None, rule: dict[str, Any] | None, defaults: dict[str, Any]) -> str:
+    book = runner.open(path, read_only=True, password=item.get("password"))
+    try:
+        ws = sheet_for(book, item.get("sheet"), defaults["default_sheet"])
+        _, mapping = headers(ws, int(defaults.get("header_row", 1)))
+        if rule_name and rule:
+            validate_rule_headers(rule_name, rule, mapping)
+        return ws.Name
     finally:
         runner.close(book, False)
 
 
-def make_sources(base: Path, raw_dir: Path, norm_dir: Path, source_cfg: dict[str, Any], shops: list[dict[str, Any]], current_shop: dict[str, Any] | None, default_sheet: str) -> dict[str, str]:
-    refs: dict[str, str] = {}
-    definitions = {
-        "erp_inventory": (norm_dir / "ERP库存.xlsx", source_cfg["erp_inventory"].get("sheet") or "ERP库存", "$A:$J"),
-        "erp_product": (norm_dir / "ERP商品.xlsx", source_cfg["erp_product"].get("sheet") or default_sheet, "$A:$M"),
-        "erp_combo": (norm_dir / "ERP组合.xlsx", source_cfg["erp_combo"].get("sheet") or "ERP组合", "$A:$U"),
-        "erp_ban": (source_path(base, source_cfg, "erp_ban", raw_dir), source_cfg["erp_ban"].get("sheet") or default_sheet, "$A:$H"),
-    }
-    if current_shop:
-        sales = source_path(base, current_shop, "sales", raw_dir)
-        definitions["sales"] = (sales, current_shop.get("sales_sheet") or default_sheet, "$B:$T")
-    for name, (path, sheet, cell_range) in definitions.items():
-        refs[name] = external_ref(path, sheet, cell_range)
-    return refs
+def check_inputs(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], rules: dict[str, Any], defaults: dict[str, Any]) -> None:
+    for name in REQUIRED_ERP_SOURCES:
+        item = sources[name]
+        path = source_path(raw_dir, item)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        rule = rules.get(name)
+        sheet = check_workbook(runner, path, item, name if rule else None, rule, defaults)
+        print(f"检查: {path.name} [{sheet}]")
+    for shop in sources.get("shops", []):
+        if not shop.get("enabled", True):
+            output = shop.get("output") or f"{Path(shop['product']).stem}.xlsx"
+            print(f"跳过: {shop['name']} 已停用；已有输出 {output} 不会自动删除")
+            continue
+        product = source_path(raw_dir, shop, "product")
+        sales = source_path(raw_dir, shop, "sales")
+        for path in (product, sales):
+            if not path.exists():
+                raise FileNotFoundError(path)
+        selected_rule = shop.get("rule", "shop_product")
+        product_item = {"sheet": shop.get("product_sheet"), "password": shop.get("product_password")}
+        sales_item = {"sheet": shop.get("sales_sheet"), "password": shop.get("sales_password")}
+        product_sheet = check_workbook(runner, product, product_item, selected_rule, rules[selected_rule], defaults)
+        sales_sheet = check_workbook(runner, sales, sales_item, None, None, defaults)
+        print(f"检查: {shop['name']} 商品 [{product_sheet}] / 销售 [{sales_sheet}]")
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8-sig") as fh:
-        return json.load(fh)
+    with path.open("r", encoding="utf-8-sig") as handle:
+        config = json.load(handle)
+    validate_config(config)
+    return config
 
 
-def run(config_path: Path) -> None:
+def context(config_path: Path) -> tuple[dict[str, Any], Path, Path, dict[str, Any]]:
     config = load_config(config_path)
     base = config_path.parent.resolve()
     paths = config.get("paths", {})
-    raw_dir = (base / paths.get("raw", "raw")).resolve()
-    norm_dir = (base / paths.get("norm", "norm")).resolve()
-    defaults = {"default_sheet": "Sheet1", "header_row": 1, **config.get("excel", {})}
-    sources = config["sources"]
+    raw_value = paths.get("raw", "raw")
+    norm_value = paths.get("norm", "norm")
+    raw_dir = source_path(base, raw_value)
+    norm_dir = source_path(base, norm_value)
+    defaults = {"default_sheet": "Sheet1", "header_row": 1, "overwrite": True, **config.get("excel", {})}
+    return config, raw_dir.resolve(), norm_dir.resolve(), defaults
+
+
+def check(config_path: Path) -> None:
+    config, raw_dir, _, defaults = context(config_path)
+    runner = ExcelRunner()
+    try:
+        check_inputs(runner, raw_dir, config["sources"], config["rules"], defaults)
+    finally:
+        runner.shutdown()
+    print("配置和输入检查通过")
+
+
+def run(config_path: Path) -> None:
+    config, raw_dir, norm_dir, defaults = context(config_path)
     rules = config["rules"]
     runner = ExcelRunner()
     try:
-        sources = dict(sources)
-        inventory_input = source_path(base, sources, "erp_inventory", raw_dir)
-        product_input = source_path(base, sources, "erp_product", raw_dir)
-        combo_input = source_path(base, sources, "erp_combo", raw_dir)
-        ban_input = source_path(base, sources, "erp_ban", raw_dir)
-        for p in [inventory_input, product_input, combo_input, ban_input]:
-            if not p.exists():
-                raise FileNotFoundError(p)
-        for key in ["erp_inventory", "erp_product", "erp_combo", "erp_ban"]:
-            entry = dict(sources[key])
-            entry["sheet"] = actual_sheet_name(runner, source_path(base, sources, key, raw_dir), entry.get("sheet"), defaults["default_sheet"], entry.get("password"))
-            sources[key] = entry
-
-        process_file(runner, inventory_input, norm_dir / "ERP库存.xlsx", sources["erp_inventory"], rules["erp_inventory"], defaults, {})
-        process_file(runner, product_input, norm_dir / "ERP商品.xlsx", sources["erp_product"], rules["erp_product"], defaults, make_sources(base, raw_dir, norm_dir, sources, [], None, defaults["default_sheet"]))
-        process_file(runner, combo_input, norm_dir / "ERP组合.xlsx", sources["erp_combo"], rules["erp_combo"], defaults, make_sources(base, raw_dir, norm_dir, sources, [], None, defaults["default_sheet"]))
-
-        for shop in sources.get("shops", []):
-            if not shop.get("enabled", True):
+        check_inputs(runner, raw_dir, config["sources"], rules, defaults)
+        sources = resolve_source_sheets(runner, raw_dir, config["sources"], defaults["default_sheet"])
+        fixed_outputs = {"erp_inventory": "ERP库存.xlsx", "erp_product": "ERP商品.xlsx", "erp_combo": "ERP组合.xlsx"}
+        for name in ("erp_inventory", "erp_product", "erp_combo"):
+            item = sources[name]
+            output = item.get("output", fixed_outputs[name])
+            refs = {} if name == "erp_inventory" else make_sources(raw_dir, norm_dir, sources, None, defaults["default_sheet"])
+            process_file(runner, source_path(raw_dir, item), source_path(norm_dir, output), item, rules[name], defaults, refs)
+        for configured_shop in sources.get("shops", []):
+            if not configured_shop.get("enabled", True):
                 continue
-            product = source_path(base, shop, "product", raw_dir)
-            sales = source_path(base, shop, "sales", raw_dir)
-            if not product.exists() or not sales.exists():
-                raise FileNotFoundError(f"店铺 {shop.get('name', product.stem)} 缺少商品或销售文件")
-            shop = dict(shop)
+            shop = dict(configured_shop)
+            product = source_path(raw_dir, shop, "product")
+            sales = source_path(raw_dir, shop, "sales")
             shop["product_sheet"] = actual_sheet_name(runner, product, shop.get("product_sheet"), defaults["default_sheet"], shop.get("product_password"))
             shop["sales_sheet"] = actual_sheet_name(runner, sales, shop.get("sales_sheet"), defaults["default_sheet"], shop.get("sales_password"))
-            process_file(runner, product, norm_dir / f"{product.stem}.xlsx", {"file": shop["product"], "sheet": shop.get("product_sheet"), "password": shop.get("product_password")}, rules["shop_product"], defaults, make_sources(base, raw_dir, norm_dir, sources, [], shop, defaults["default_sheet"]))
+            selected_rule = shop.get("rule", "shop_product")
+            output = shop.get("output") or f"{product.stem}.xlsx"
+            source = {"sheet": shop["product_sheet"], "password": shop.get("product_password")}
+            process_file(runner, product, source_path(norm_dir, output), source, rules[selected_rule], defaults, make_sources(raw_dir, norm_dir, sources, shop, defaults["default_sheet"]))
     finally:
         runner.shutdown()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="通过 Excel COM 将 raw 表格标准化到 norm")
-    parser.add_argument("-c", "--config", default="norm.json")
+    parser.add_argument("-c", "--config", default="norm.json", help="配置文件路径")
+    parser.add_argument("--check", action="store_true", help="只检查配置和输入，不生成输出")
     args = parser.parse_args()
     try:
-        run(Path(args.config).resolve())
+        config_path = Path(args.config).resolve()
+        check(config_path) if args.check else run(config_path)
         return 0
     except Exception as exc:
         print(f"失败: {exc}", file=sys.stderr)
