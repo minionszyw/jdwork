@@ -154,15 +154,18 @@ def validate_filter_config(config: dict[str, Any]) -> None:
     if not isinstance(backfill, dict):
         raise ValueError("backfill 必须是对象")
     fields = backfill.get("fields", [])
-    if not isinstance(fields, list) or any(not isinstance(field, str) or not field for field in fields):
+    if not isinstance(fields, list) or not fields or any(not isinstance(field, str) or not field for field in fields):
         raise ValueError("backfill.fields 必须是非空字符串数组")
-    if len(fields) != len(set(fields)) or set(fields) & {"店铺", "类型", "SKUID", "货号"}:
-        raise ValueError("backfill.fields 不能重复或包含定位/元数据字段")
+    if len(fields) != len(set(fields)) or set(fields) & {"店铺", "类型", "SKUID"}:
+        raise ValueError("backfill.fields 不能重复或包含店铺、类型、SKUID 定位/元数据字段")
     if backfill.get("key_fields", ["SKUID"]) != ["SKUID"]:
         raise ValueError("当前版本回填键必须为 ['SKUID']")
     verify_fields = backfill.get("verify_fields", ["货号"])
-    if not isinstance(verify_fields, list) or any(not isinstance(field, str) or not field for field in verify_fields):
+    if not isinstance(verify_fields, list) or not verify_fields or any(not isinstance(field, str) or not field for field in verify_fields):
         raise ValueError("backfill.verify_fields 必须是非空字符串数组")
+    if set(fields) & set(verify_fields):
+        overlap = ", ".join(sorted(set(fields) & set(verify_fields)))
+        raise ValueError(f"backfill.fields 不能包含校验字段: {overlap}")
 
 
 def validate_backfill_fields(config: dict[str, Any], normalize_config: dict[str, Any]) -> None:

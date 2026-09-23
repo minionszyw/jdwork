@@ -1,4 +1,6 @@
 import unittest
+import json
+from pathlib import Path
 
 from jdwork import backfill
 from jdwork import filtering as filter_module
@@ -16,6 +18,18 @@ class FilterRulesTest(unittest.TestCase):
         row = {"商品状态": "上架", "库存": 5}
         self.assertTrue(filter_module.matches_rule(row, {"logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "上架"}, {"field": "库存", "operator": "lt", "value": 10}]}))
         self.assertTrue(filter_module.matches_rule(row, {"logic": "or", "conditions": [{"field": "商品状态", "operator": "eq", "value": "自主下架"}, {"field": "库存", "operator": "lt", "value": 10}]}))
+
+    def test_missing_encoding_rule_only_matches_missing_codes(self):
+        with Path("config/filter.json").open(encoding="utf-8") as handle:
+            config = json.load(handle)
+        rule = next(item for item in config["filters"] if item["key"] == "missing_encoding")
+        self.assertFalse(filter_module.matches_rule({"商家SKU": "1001", "货号": "1002"}, rule))
+        self.assertTrue(filter_module.matches_rule({"商家SKU": "--", "货号": "1002"}, rule))
+        self.assertTrue(filter_module.matches_rule({"商家SKU": "1001", "货号": "--"}, rule))
+
+    def test_text_backfill_preserves_leading_zero_differences(self):
+        self.assertNotEqual(backfill.normalized("00123", True), backfill.normalized("123", True))
+        self.assertEqual(backfill.normalized("00123", True), "00123")
 
     def test_duplicate_backfill_values_merge(self):
         changes = {}

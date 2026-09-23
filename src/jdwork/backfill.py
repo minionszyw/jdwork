@@ -14,8 +14,8 @@ def read_filter_rows(runner: normalize.ExcelRunner, path: Path, sheet: str | Non
     return book, headers, rows
 
 
-def normalized(value: Any) -> Any:
-    return filter_module.comparable(value)
+def normalized(value: Any, text_field: bool = False) -> Any:
+    return normalize.clean_text(value) if text_field else filter_module.comparable(value)
 
 
 def merge_changes(changes: dict[tuple[str, str], dict[str, Any]], row: dict[str, Any], fields: list[str]) -> None:
@@ -75,7 +75,7 @@ def raw_row_map(ws: Any, mapping: dict[str, int], key: str, verify: list[str], h
     return result, checks
 
 
-def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, Any], updates: dict[str, Any], verify_fields: list[str], dry_run: bool, backup: bool, header_row: int) -> int:
+def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, Any], updates: dict[str, Any], verify_fields: list[str], text_fields: set[str], dry_run: bool, backup: bool, header_row: int) -> int:
     raw_path = source_path(raw_dir, shop, "product")
     book = runner.open(raw_path, read_only=dry_run, password=shop.get("product_password"))
     try:
@@ -91,18 +91,19 @@ def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, 
             row_number = row_map[skuid]
             for field in verify_fields:
                 expected_values = fields.get(f"__verify__{field}", [])
-                distinct_expected = {repr(normalized(value)): value for value in expected_values}
+                distinct_expected = {repr(normalized(value, True)): value for value in expected_values}
                 if len(distinct_expected) > 1:
                     raise ValueError(f"{shop['name']} / {skuid} 的校验字段 {field} 存在冲突")
                 expected = next(iter(distinct_expected.values()), None)
-                if expected is not None and normalized(checks[skuid][field]) != normalized(expected):
+                if normalized(checks[skuid][field], True) != normalized(expected, True):
                     raise ValueError(f"{shop['name']} / {skuid} 的校验字段 {field} 不一致")
             for field, new_value in fields.items():
                 if field.startswith("__verify__"):
                     continue
                 current = ws.Cells(row_number, mapping[field]).Value
-                values = {repr(normalized(value)): value for value in new_value}
-                candidates = [value for value in values.values() if normalized(current) != normalized(value)]
+                text_field = field in text_fields
+                values = {repr(normalized(value, text_field)): value for value in new_value}
+                candidates = [value for value in values.values() if normalized(current, text_field) != normalized(value, text_field)]
                 if len(candidates) > 1:
                     raise ValueError(f"{shop['name']} / {skuid} 的字段 {field} 存在冲突修改")
                 if not candidates:
@@ -111,6 +112,8 @@ def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, 
                 if dry_run:
                     print(f"预览: {shop['name']} / {skuid} / {field}: {current!r} -> {new_value!r}")
                 else:
+                    if text_field:
+                        ws.Cells(row_number, mapping[field]).NumberFormat = "@"
                     ws.Cells(row_number, mapping[field]).Value = new_value
                     print(f"回填: {shop['name']} / {skuid} / {field}: {current!r} -> {new_value!r}")
                 changed += 1
@@ -159,7 +162,10 @@ def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
         total = 0
         raw_header_row = int(normalize_config.get("excel", {}).get("header_row", 1))
         for shop_name, updates in grouped.items():
-            total += process_store(runner, raw_dir, shops[shop_name], updates, verify_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
+            shop = shops[shop_name]
+            rule = normalize_config["rules"][shop.get("rule", "shop_product")]
+            text_fields = set(rule.get("text_columns", []))
+            total += process_store(runner, raw_dir, shop, updates, verify_fields, text_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
         print(f"{'预览' if dry_run else '回填'}完成，共 {total} 个字段变更")
         return total
     finally:

@@ -14,8 +14,8 @@
   },
   "backfill": {
     "key_fields": ["SKUID"],
-    "verify_fields": ["货号"],
-    "fields": ["商品状态","商品总库存","京东价"],
+    "verify_fields": ["商品编码"],
+    "fields": ["商品状态", "商品总库存", "京东价", "商家SKU", "货号"],
     "backup": true
   },
   "filters": [
@@ -61,8 +61,7 @@
       "logic": "and",
       "conditions": [
         {"field": "商品状态", "operator": "eq", "value": "上架"},
-        {"field": "毛利率", "operator": "lt", "value": 0.01},
-        {"field": "货号", "operator": "not_in", "value": []}
+        {"field": "毛利率", "operator": "lt", "value": 0.01}
       ]
     },
     {
@@ -74,6 +73,16 @@
         {"field": "商品状态", "operator": "eq", "value": "上架"},
         {"field": "毛利率", "operator": "lt", "value": 0.15},
         {"field": "货号", "operator": "not_in", "value": ["1056863"]}
+      ]
+    },
+    {
+      "key": "missing_encoding",
+      "name": "编码缺失",
+      "enabled": true,
+      "logic": "or",
+      "conditions": [
+        {"field": "商家SKU", "operator": "eq", "value": "--"},
+        {"field": "货号", "operator": "eq", "value": "--"}
       ]
     }
   ]

@@ -58,14 +58,16 @@ tests/              # 不依赖 Excel 的单元测试
    jdw backfill --input .\data\filter\filter-20260923150000.xlsx
    ```
 
-回填只允许写入 `config/filter.json` 的 `backfill.fields`，默认按 `店铺 + SKUID` 定位并用 `货号` 校验。写入前会创建 `.bak` 备份。不要在 Excel 中打开正在处理的文件。
+回填只允许写入 `config/filter.json` 的 `backfill.fields`，默认按 `店铺 + SKUID` 定位并用稳定字段校验。写入前会创建 `.bak` 备份。不要在 Excel 中打开正在处理的文件。
 
 ## 配置维护
 
 - 在 `sources.shops` 增删店铺；设置 `enabled: false` 可停用。
 - 在 `rules` 配置文本、数字、查找和计算字段；公式支持 `{this:字段}`、`{range:字段}`、`{source:别名}`。
 - 在 `filter.json.filters` 配置条件和 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。
-- 只把允许人工修改的字段加入 `backfill.fields`，不要加入公式列、`店铺` 或 `类型`。
+- 只把允许人工修改的字段加入 `backfill.fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`。如果要修改 `货号`，请把不会被编辑的稳定字段（例如 `商品编码`）配置到 `backfill.verify_fields`。
+- 新增指标或筛选规则只需修改 JSON；Python 模块提供通用格式化、公式、筛选和回填能力。
+- `missing_encoding` 可筛选 `商家SKU` 或 `货号` 为 `--` 的商品。修改筛选表中的编码后运行回填即可，无需重新导出原始表；回填后重新运行 `jdw normalize` 刷新标准化结果。
 
 显式配置路径会覆盖默认值：
 

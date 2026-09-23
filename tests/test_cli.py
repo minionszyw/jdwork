@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,6 +45,10 @@ class RangeShapeTest(unittest.TestCase):
 
 
 class FilterConfigTest(unittest.TestCase):
+    def test_current_filter_config_validates(self):
+        with Path("config/filter.json").open(encoding="utf-8") as handle:
+            validate_filter_config(json.load(handle))
+
     def test_rejects_old_normalize_config_key(self):
         with self.assertRaisesRegex(ValueError, "normalize_config"):
             validate_filter_config({"paths": {"norm_config": "norm.json"}, "filters": []})
@@ -56,6 +61,26 @@ class FilterConfigTest(unittest.TestCase):
     def test_rejects_unsafe_backfill_field(self):
         config = {"filters": [], "backfill": {"fields": ["商品状态", "店铺"]}}
         with self.assertRaisesRegex(ValueError, "定位/元数据"):
+            validate_filter_config(config)
+
+    def test_allows_encoding_fields_with_stable_verification(self):
+        config = {
+            "filters": [],
+            "backfill": {"fields": ["商家SKU", "货号"], "verify_fields": ["商品编码"]},
+        }
+        validate_filter_config(config)
+
+    def test_rejects_backfill_verify_overlap(self):
+        config = {
+            "filters": [],
+            "backfill": {"fields": ["货号"], "verify_fields": ["货号"]},
+        }
+        with self.assertRaisesRegex(ValueError, "校验字段"):
+            validate_filter_config(config)
+
+    def test_rejects_empty_backfill_fields(self):
+        config = {"filters": [], "backfill": {"fields": []}}
+        with self.assertRaisesRegex(ValueError, "非空"):
             validate_filter_config(config)
 
 

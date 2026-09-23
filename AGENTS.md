@@ -49,6 +49,12 @@ The commands require Windows and Microsoft Excel. `normalize` and `filter` use E
 - Preserve Chinese source field names exactly when they are configuration keys.
 - Keep CLI behavior in `cli.py`; command modules expose reusable `run` and `check` functions.
 
+## Configuration-Driven Architecture
+
+- Keep Python modules generic and stable. New normalization metrics, formulas, filter rules, and writable fields belong in JSON configuration; do not add a Python module for one business rule.
+- Reuse the shared formula renderer, filter operators, Excel helpers, and backfill safeguards before adding code.
+- When a backfill field is editable in the filter workbook, choose a separate stable `verify_fields` value so the edited value is not used as its own verification snapshot.
+
 ## Testing Guidelines
 
 Test configuration validation, text leading-zero preservation, numeric conversion, formula rendering, filter operators, header-row handling, duplicate-key conflicts, and backfill allowlists. For behavior changes, run unit tests plus `normalize --check` and `filter --check` against representative local files. Validate real backfill writes only against a temporary raw copy.
@@ -59,4 +65,4 @@ Use concise imperative commit subjects, such as `Add jdwork CLI package`. Keep e
 
 ## Security and Configuration
 
-Treat workbook contents and configured passwords as sensitive. Keep credentials out of committed JSON. Only fields listed in `config/filter.json` `backfill.fields` may be written back to raw files. Review the dry-run output before applying a batch.
+Treat workbook contents and configured passwords as sensitive. Keep credentials out of committed JSON. Only fields listed in `config/filter.json` `backfill.fields` may be written back to raw files. `店铺`, `类型`, and `SKUID` are metadata/identity fields and cannot be written. Review the dry-run output before applying a batch.
