@@ -12,20 +12,27 @@ class NormalizeHelpersTest(unittest.TestCase):
         config = json.loads(Path("config/normalize.json").read_text(encoding="utf-8"))
         composed = normalize._compose_config(config, common)
         for group in config["rules"]:
-            target = group["table"]
-            if target == "shop_product":
-                target = composed["sources"]["shops"][0]["product_table"]
-            runtime = composed["rules"][target]
-            for kind in ("text", "number"):
-                self.assertEqual(runtime[f"{kind}_columns"], [c["column"] for c in group["columns"] if c["type"] == "format" and c["value"] == kind])
-            self.assertEqual(runtime["lookups"], [{"column": c["column"], "formula": c["value"]} for c in group["columns"] if c["type"] == "function"])
+            for target in group["tables"]:
+                runtime = composed["rules"][target]
+                for kind in ("text", "number"):
+                    self.assertEqual(runtime[f"{kind}_columns"], [c["column"] for c in group["columns"] if c["type"] == "format" and c["value"] == kind])
+                self.assertEqual(runtime["lookups"], [{"column": c["column"], "formula": c["value"]} for c in group["columns"] if c["type"] == "function"])
+        shop_tables = {t["table"] for t in common["tables"] if t["type"] == "shop_product"}
+        shared = next(g for g in config["rules"] if len(g["tables"]) > 1)
+        self.assertEqual(set(shared["tables"]), shop_tables)
+        self.assertEqual(len(shop_tables), 5)
 
     def test_invalid_grouped_rules(self):
-        valid = {"rules": [{"table": "erp_product", "columns": [{"column": "code", "type": "format", "value": "text"}]}]}
+        valid = {"rules": [{"tables": ["erp_product"], "columns": [{"column": "code", "type": "format", "value": "text"}]}]}
         cases = []
         duplicate_table = copy.deepcopy(valid)
         duplicate_table["rules"].append(copy.deepcopy(valid["rules"][0]))
         cases.append(duplicate_table)
+        for targets in ([], "erp_product", [""], [None], ["erp_product", "erp_product"]):
+            invalid = copy.deepcopy(valid)
+            invalid["rules"][0]["tables"] = targets
+            cases.append(invalid)
+        cases.append({"rules": [{"table": "erp_product", "columns": []}]})
         duplicate_column = copy.deepcopy(valid)
         duplicate_column["rules"][0]["columns"] *= 2
         cases.append(duplicate_column)
@@ -40,8 +47,8 @@ class NormalizeHelpersTest(unittest.TestCase):
 
     def test_grouped_rules_reject_unknown_references(self):
         common = json.loads(Path("config/config.json").read_text(encoding="utf-8"))
-        for table, formula in (("unknown", "=1"), ("erp_product", "=SUM({source:unknown})")):
-            config = {"rules": [{"table": table, "columns": [{"column": "metric", "type": "function", "value": formula}]}]}
+        for table, formula in (("shop_product", "=1"), ("unknown", "=1"), ("erp_product", "=SUM({source:unknown})")):
+            config = {"rules": [{"tables": [table], "columns": [{"column": "metric", "type": "function", "value": formula}]}]}
             with self.subTest(table=table), self.assertRaises(ValueError):
                 normalize._compose_config(config, common)
 

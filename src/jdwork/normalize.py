@@ -57,14 +57,17 @@ def grouped_actions(config: dict[str, Any]) -> list[dict[str, str]]:
     seen_tables: set[str] = set()
     for index, group in enumerate(groups):
         prefix = f"rules[{index}]"
-        if not isinstance(group, dict) or set(group) != {"table", "columns"}:
-            raise ValueError(f"{prefix} 只能包含 table 和 columns")
-        table = group["table"]
-        if not isinstance(table, str) or not table.strip():
-            raise ValueError(f"{prefix}.table 必须是非空字符串")
-        if table in seen_tables:
-            raise ValueError(f"table 重复: {table}")
-        seen_tables.add(table)
+        if not isinstance(group, dict) or set(group) != {"tables", "columns"}:
+            raise ValueError(f"{prefix} 只能包含 tables 和 columns")
+        tables = group["tables"]
+        if not isinstance(tables, list) or not tables:
+            raise ValueError(f"{prefix}.tables 必须是非空数组")
+        for table in tables:
+            if not isinstance(table, str) or not table.strip():
+                raise ValueError(f"{prefix}.tables 必须包含非空字符串")
+            if table in seen_tables:
+                raise ValueError(f"table 重复: {table}")
+            seen_tables.add(table)
         if not isinstance(group["columns"], list):
             raise ValueError(f"{prefix}.columns 必须是数组")
         seen_columns: set[str] = set()
@@ -76,7 +79,7 @@ def grouped_actions(config: dict[str, Any]) -> list[dict[str, str]]:
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"{location}.column 必须是非空字符串")
             if name in seen_columns:
-                raise ValueError(f"{table} 的 column 重复: {name}")
+                raise ValueError(f"{prefix} 的 column 重复: {name}")
             seen_columns.add(name)
             kind, value = column["type"], column["value"]
             if kind not in ("format", "function"):
@@ -85,7 +88,7 @@ def grouped_actions(config: dict[str, Any]) -> list[dict[str, str]]:
                 raise ValueError(f"{location}.value 必须是 text 或 number")
             if kind == "function" and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{location}.value 必须是非空 Excel 公式")
-            actions.append({"table": table, **column})
+            actions.extend({"table": table, **column} for table in tables)
     return actions
 
 
@@ -384,9 +387,11 @@ def _compose_config(specialized: dict[str, Any], common: dict[str, Any]) -> dict
     rules_config = grouped_actions(specialized)
     table_names = {item["table"] for item in common["tables"]}
     source_names = table_names | {"sales"}
+    for group in specialized["rules"]:
+        for table in group["tables"]:
+            if table not in table_names:
+                raise ValueError(f"规则引用了不存在的 table: {table}")
     for action in rules_config:
-        if action["table"] not in table_names and action["table"] not in TABLE_TYPES:
-            raise ValueError(f"规则引用了不存在的 table: {action['table']}")
         if action["type"] == "function":
             aliases = re.findall(r"\{source:([^{}]+)\}", action["value"])
             unknown = sorted(set(aliases) - source_names)
@@ -412,19 +417,13 @@ def _compose_config(specialized: dict[str, Any], common: dict[str, Any]) -> dict
                 shop["enabled"] = item["enabled"]
     sources["shops"] = list(shops.values())
     rules: dict[str, dict[str, Any]] = {}
-    table_targets = {
-        kind: [item["table"] for item in common["tables"] if item["type"] == kind]
-        for kind in TABLE_TYPES
-    }
     for action in rules_config:
-        targets = table_targets.get(action["table"], [action["table"]])
-        for target in targets:
-            rule = rules.setdefault(target, {"text_columns": [], "number_columns": [], "lookups": [], "calculations": []})
-            if action["type"] == "format":
-                rule[f"{action['value']}_columns"].append(action["column"])
-            else:
-                formula = {"column": action["column"], "formula": action["value"]}
-                rule["lookups"].append(formula)
+        target = action["table"]
+        rule = rules.setdefault(target, {"text_columns": [], "number_columns": [], "lookups": [], "calculations": []})
+        if action["type"] == "format":
+            rule[f"{action['value']}_columns"].append(action["column"])
+        else:
+            rule["lookups"].append({"column": action["column"], "formula": action["value"]})
     composed = dict(specialized)
     composed["paths"] = common.get("paths", {})
     composed["sheet"] = common.get("sheet", {"default": "Sheet1"})

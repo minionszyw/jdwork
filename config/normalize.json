@@ -1,7 +1,9 @@
 {
   "rules": [
     {
-      "table": "erp_inventory",
+      "tables": [
+        "erp_inventory"
+      ],
       "columns": [
         {
           "column": "商品代码",
@@ -11,7 +13,9 @@
       ]
     },
     {
-      "table": "erp_product",
+      "tables": [
+        "erp_product"
+      ],
       "columns": [
         {
           "column": "商品编码",
@@ -36,7 +40,9 @@
       ]
     },
     {
-      "table": "erp_combo",
+      "tables": [
+        "erp_combo"
+      ],
       "columns": [
         {
           "column": "组合商品代码",
@@ -86,7 +92,13 @@
       ]
     },
     {
-      "table": "shop_product",
+      "tables": [
+        "baijilin_product",
+        "jixitang_product",
+        "jingxi_product",
+        "yangsonghe_product",
+        "yikangmin_product"
+      ],
       "columns": [
         {
           "column": "商家SKU",

@@ -38,11 +38,11 @@ tests/              # 不依赖 Excel 的单元测试
 | 文件 | 内容 |
 | --- | --- |
 | `config.json` | 公共 `paths`、`tables` 和默认 `sheet`；表记录包含 `table`、`name`、`type`、`file`、`shop`。 |
-| `normalize.json` | 按表分组的标准化规则；每个 `column` 使用 `format`（`text`/`number`）或 `function`（Excel 公式）。 |
+| `normalize.json` | 通过 `tables` 数组明确指定适用表的标准化规则；每个 `column` 使用 `format`（`text`/`number`）或 `function`（Excel 公式）。 |
 | `filter.json` | `filters`、条件及 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。 |
 | `backfill.json` | 可回填的 `fields` 及 `verify_fields`、备份等安全设置。 |
 
-维护配置时，在 `config.json` 的 `tables` 中增删 ERP 或店铺表，并为同一店铺的商品表和销售表设置相同的 `shop`。标准化规则按 `table` 分组，公式支持 `{this:字段}`、`{range:字段}` 和 `{source:别名}`；`shop_product` 规则可应用到所有店铺商品表。仅将允许人工修改的字段加入 `backfill.json` 的 `fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`；修改 `货号` 时，应配置不会被编辑的稳定字段（如 `商品编码`）作为 `verify_fields`。
+维护配置时，在 `config.json` 的 `tables` 中增删 ERP 或店铺表，并为同一店铺的商品表和销售表设置相同的 `shop`。标准化规则使用 `tables` 数组列出 `config.json` 中的具体表标识，公式支持 `{this:字段}`、`{range:字段}` 和 `{source:别名}`；多张表可共享一组规则，同一表只能出现在一个规则组中；新增店铺时须将商品表标识加入对应数组。仅将允许人工修改的字段加入 `backfill.json` 的 `fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`；修改 `货号` 时，应配置不会被编辑的稳定字段（如 `商品编码`）作为 `verify_fields`。
 
 ## 闭环使用
 

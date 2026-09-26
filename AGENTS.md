@@ -50,7 +50,7 @@ The commands require Windows and Microsoft Excel. `normalize` and `filter` use E
 - Keep business rules, formulas, paths, sheets, and writable fields in JSON configuration.
 - Preserve Chinese source field names exactly when they are configuration keys.
 - Keep every JSON configuration file expanded with indentation; do not compress objects or arrays onto one line.
-- Group `normalize.json` rules by table: each group contains `table` and `columns`; each column action contains `column`, `type`, and `value`. Preserve column order and avoid duplicate tables or columns within a group.
+- Group `normalize.json` rules by table: each group contains `tables` and `columns`; `tables` is a nonempty array of explicit table identifiers from `config.json`; each column action contains `column`, `type`, and `value`. Preserve column order and avoid duplicate tables across groups or columns within a group. Add new shop tables explicitly to the appropriate rule group.
 - Keep CLI behavior in `cli.py`; command modules expose reusable `run` and `check` functions.
 - Commands use the fixed files in `config/`; shared paths and the default sheet belong in `config.json`, normalization rules in `normalize.json`, filters in `filter.json`, and backfill settings in `backfill.json`.
 
