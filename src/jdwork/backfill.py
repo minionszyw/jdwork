@@ -47,7 +47,7 @@ def load_backfill_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Pa
     common = read_json(base / "config.json")
     normalize_path = base / "normalize.json"
     normalize_config = normalize.load_config(normalize_path)
-    filter_module.validate_backfill_fields({"backfill": config}, normalize_config)
+    filter_module.validate_backfill_fields(config, normalize_config)
     raw_dir = source_path(base, common.get("paths", {}).get("raw", "../data/raw")).resolve()
     return config, normalize_config, raw_dir, common.get("sheet", {"default": "Sheet1"})
 
@@ -129,7 +129,7 @@ def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, 
         runner.close(book, False)
 
 
-def find_latest_input(config: dict[str, Any], config_path: Path) -> Path:
+def find_latest_input(config_path: Path) -> Path:
     """Select the filter workbook with the greatest filename batch id."""
     base = config_path.parent.resolve()
     common = read_json(base / "config.json")
@@ -154,7 +154,7 @@ def find_latest_input(config: dict[str, Any], config_path: Path) -> Path:
 def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
     config, normalize_config, raw_dir, sheet = load_backfill_config(config_path)
     if input_path is None:
-        input_path = find_latest_input(config, config_path)
+        input_path = find_latest_input(config_path)
     else:
         input_path = input_path.resolve()
     print(f"使用筛选文件: {input_path}")

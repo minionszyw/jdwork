@@ -12,9 +12,6 @@ from .config import read_json, source_path
 from .excel import ExcelRunner, as_tuple, clean_text, headers, require_columns, sheet_for, used_last_row
 
 XL_OPEN_XML_WORKBOOK = 51
-REQUIRED_ERP_SOURCES = ("erp_inventory", "erp_product", "erp_ban", "erp_combo")
-REQUIRED_RULES = ("erp_inventory", "erp_product", "erp_combo")
-FORMULA_SOURCE_NAMES = {*REQUIRED_ERP_SOURCES, "sales"}
 TABLE_TYPES = {"erp", "shop_product", "shop_sales"}
 
 def clean_number(value: Any) -> Any:
@@ -96,92 +93,9 @@ def validate_config(config: dict[str, Any]) -> None:
     if "tables" in config:
         validate_common_config(config)
         return
-    if "sources" not in config and "common_config" in config.get("paths", {}):
-        if "norm" in config.get("paths", {}):
-            raise ValueError("paths.norm 已停用，请改用 paths.normalize")
-        common_path = source_path(Path.cwd(), config["paths"]["common_config"])
-        if not common_path.exists():
-            common_path = Path.cwd() / "config" / config["paths"]["common_config"]
-        if common_path.exists():
-            validate_common_config(read_json(common_path))
-        return
-    if "sources" not in config and "rules" in config:
-        if "norm" in config.get("paths", {}):
-            raise ValueError("paths.norm 已停用，请改用 paths.normalize")
-        grouped_actions(config)
-        return
-    errors: list[str] = []
-    paths = config.get("paths", {})
-    if not isinstance(paths, dict):
-        errors.append("paths 必须是对象")
-    elif "norm" in paths:
-        errors.append("paths.norm 已停用，请改用 paths.normalize")
-    sources = config.get("sources")
-    rules = config.get("rules")
-    if not isinstance(sources, dict):
-        raise ValueError("配置缺少对象 sources")
-    if not isinstance(rules, dict):
-        raise ValueError("配置缺少对象 rules")
-    for name in REQUIRED_ERP_SOURCES:
-        item = sources.get(name)
-        if not isinstance(item, dict) or not item.get("file"):
-            errors.append(f"sources.{name} 必须配置 file")
-        if name in REQUIRED_RULES and name not in rules:
-            errors.append(f"rules 缺少 {name}")
-    seen_names: set[str] = set()
-    seen_outputs: set[str] = set()
-    shops = sources.get("shops", [])
-    if not isinstance(shops, list):
-        errors.append("sources.shops 必须是数组")
-        shops = []
-    for index, shop in enumerate(shops):
-        prefix = f"sources.shops[{index}]"
-        if not isinstance(shop, dict):
-            errors.append(f"{prefix} 必须是对象")
-            continue
-        for key in ("name", "product", "sales"):
-            if not shop.get(key):
-                errors.append(f"{prefix} 缺少 {key}")
-        name = str(shop.get("name", ""))
-        if name in seen_names:
-            errors.append(f"店铺名称重复: {name}")
-        seen_names.add(name)
-        selected_rule = shop.get("rule", "shop_product")
-        if selected_rule not in rules:
-            errors.append(f"店铺 {name!r} 引用了不存在的规则 {selected_rule!r}")
-        output = shop.get("output") or f"{Path(str(shop.get('product', 'unknown'))).stem}.xlsx"
-        if output in seen_outputs:
-            errors.append(f"店铺输出文件重复: {output}")
-        seen_outputs.add(output)
-    available_sources = set(sources) - {"shops"} | {shop.get("sales_table", "sales") for shop in shops if isinstance(shop, dict)} | {"sales"}
-    for name, rule in rules.items():
-        if not isinstance(rule, dict):
-            errors.append(f"rules.{name} 必须是对象")
-            continue
-        for list_name in ("text_columns", "number_columns", "lookups", "calculations"):
-            if list_name in rule and not isinstance(rule[list_name], list):
-                errors.append(f"rules.{name}.{list_name} 必须是数组")
-        fields = rule_fields(rule)
-        duplicates = sorted({field for field in fields if fields.count(field) > 1})
-        if duplicates:
-            errors.append(f"rules.{name} 公式字段重复: {', '.join(duplicates)}")
-        ordered = rule.get("output_columns")
-        if ordered is not None:
-            if len(ordered) != len(set(ordered)):
-                errors.append(f"rules.{name}.output_columns 存在重复字段")
-            if set(ordered) != set(fields):
-                errors.append(f"rules.{name}.output_columns 必须与公式字段一致")
-        for formula_rule in rule.get("lookups", []) + rule.get("calculations", []):
-            if not isinstance(formula_rule, dict) or not formula_rule.get("column") or not formula_rule.get("formula"):
-                errors.append(f"rules.{name} 中每条公式必须包含 column 和 formula")
-                continue
-            aliases = re.findall(r"\{source:([^{}]+)\}", formula_rule["formula"])
-            unknown = sorted(set(aliases) - available_sources)
-            if unknown:
-                errors.append(f"rules.{name}.{formula_rule['column']} 使用未知数据源: {', '.join(unknown)}")
-    if errors:
-        raise ValueError("配置校验失败:\n- " + "\n- ".join(errors))
-
+    if set(config) != {"rules"}:
+        raise ValueError("normalize.json 只能包含 rules")
+    grouped_actions(config)
 
 def validate_common_config(config: dict[str, Any]) -> None:
     paths = config.get("paths")
@@ -191,11 +105,10 @@ def validate_common_config(config: dict[str, Any]) -> None:
     if not isinstance(sheet, dict) or not sheet.get("default"):
         raise ValueError("公共配置 sheet.default 必须是非空字符串")
     tables = config.get("tables")
-    rules = config.get("rules")
     if not isinstance(tables, list) or not tables:
         raise ValueError("公共配置必须包含非空 tables 数组")
-    if rules is not None and not isinstance(rules, list):
-        raise ValueError("rules 必须是数组")
+    if set(config) != {"paths", "tables", "sheet"}:
+        raise ValueError("config.json 只能包含 paths、tables、sheet")
     names: set[str] = set()
     shops: dict[str, list[str]] = {}
     for index, item in enumerate(tables):
@@ -222,28 +135,6 @@ def validate_common_config(config: dict[str, Any]) -> None:
     for shop, kinds in shops.items():
         if len(kinds) != len(set(kinds)):
             raise ValueError(f"店铺 {shop} 的商品/销售表类型重复")
-    for index, item in enumerate(rules or []):
-        prefix = f"rules[{index}]"
-        if not isinstance(item, dict) or not item.get("table") or not item.get("column"):
-            raise ValueError(f"{prefix} 必须包含 table 和 column")
-        if item["table"] not in names and item["table"] not in TABLE_TYPES:
-            raise ValueError(f"{prefix} 引用了不存在的 table: {item.get('table')}")
-        if item.get("type") not in {"format", "function"}:
-            raise ValueError(f"{prefix}.type 必须是 format 或 function")
-        value = item.get("value")
-        if item["type"] == "format" and value not in {"text", "number"}:
-            raise ValueError(f"{prefix}.value 必须是 text 或 number")
-        if item["type"] == "function" and (not isinstance(value, str) or not value):
-            raise ValueError(f"{prefix}.value 必须是非空 Excel 公式")
-        if item["type"] == "function":
-            aliases = re.findall(r"\{source:([^{}]+)\}", value)
-            available = names | {table["table"] for table in tables if table["type"] == "shop_sales"} | {"sales"}
-            unknown = sorted(set(aliases) - available)
-            if unknown:
-                raise ValueError(f"{prefix}.value 使用未知数据源: {', '.join(unknown)}")
-
-
-
 def set_column_values(ws: Any, col: int, first_row: int, last_row: int, converter: Callable[[Any], Any], field: str) -> None:
     if last_row < first_row:
         return
@@ -615,5 +506,3 @@ def run(config_path: Path) -> None:
             process_file(runner, product, source_path(normalize_dir, output), source, rules[selected_rule], defaults, make_sources(raw_dir, normalize_dir, sources, shop, defaults["default_sheet"]))
     finally:
         runner.shutdown()
-
-

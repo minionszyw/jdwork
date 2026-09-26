@@ -19,7 +19,7 @@ class FilterRulesTest(unittest.TestCase):
             (root / "config.json").write_text(json.dumps({"paths": {"filter": "filter"}}), encoding="utf-8")
             config_path = root / "backfill.json"
             config_path.write_text("{}", encoding="utf-8")
-            self.assertEqual(backfill.find_latest_input({}, config_path), output / "filter-20260201000000.xlsx")
+            self.assertEqual(backfill.find_latest_input(config_path), output / "filter-20260201000000.xlsx")
     def test_operators(self):
         self.assertTrue(filter_module.apply_operator("上架", "eq", "上架"))
         self.assertTrue(filter_module.apply_operator(9, "lt", 10))

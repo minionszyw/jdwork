@@ -27,8 +27,10 @@ Run the workflow from the repository root:
 ```powershell
 jdw normalize
 jdw filter
-jdw backfill --input .\data\filter\filter-{batch_id}.xlsx --dry-run
+jdw backfill --dry-run
 ```
+
+`jdw backfill` 省略 `--input` 时自动选择最新筛选批次；需要处理历史批次时再显式传入筛选文件。
 
 Validation commands:
 

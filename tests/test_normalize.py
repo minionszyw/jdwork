@@ -83,9 +83,9 @@ class NormalizeHelpersTest(unittest.TestCase):
         self.assertEqual(len(config["sources"]["shops"]), 5)
         self.assertIn("erp_product", config["rules"])
 
-    def test_rejects_old_output_path_key(self):
-        config = {"paths": {"norm": "../norm"}, "rules": []}
-        with self.assertRaisesRegex(ValueError, "paths.normalize"):
+    def test_rejects_legacy_normalize_config(self):
+        config = {"sources": {}, "rules": {}}
+        with self.assertRaisesRegex(ValueError, "只能包含 rules"):
             normalize.validate_config(config)
 
 
