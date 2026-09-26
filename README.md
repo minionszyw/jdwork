@@ -31,9 +31,18 @@ src/jdwork/         # CLI 和业务模块
 tests/              # 不依赖 Excel 的单元测试
 ```
 
-`config/config.json` 中的相对路径以 `config/` 为基准，分别定义原始、标准化和筛选目录。
+## 配置维护
 
-`config/config.json` 是跨 ERP 和平台通用的配置，使用 `tables` 描述输入表，使用 `sheet.default` 定义默认 worksheet。每条 table 记录包含 `table`、`name`、`type`、`file`、`shop`；店铺商品表和销售表使用相同的 `shop` 值关联。`type` 支持 `erp`、`shop_product`、`shop_sales`。`normalize.json` 只配置规则，`filter.json` 只配置筛选条件，`backfill.json` 只配置回填字段和安全校验。
+所有配置文件使用展开缩进，路径均相对于 `config/` 所在目录。
+
+| 文件 | 内容 |
+| --- | --- |
+| `config.json` | 公共 `paths`、`tables` 和默认 `sheet`；表记录包含 `table`、`name`、`type`、`file`、`shop`。 |
+| `normalize.json` | 按表分组的标准化规则；每个 `column` 使用 `format`（`text`/`number`）或 `function`（Excel 公式）。 |
+| `filter.json` | `filters`、条件及 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。 |
+| `backfill.json` | 可回填的 `fields` 及 `verify_fields`、备份等安全设置。 |
+
+维护配置时，在 `config.json` 的 `tables` 中增删 ERP 或店铺表，并为同一店铺的商品表和销售表设置相同的 `shop`。标准化规则按 `table` 分组，公式支持 `{this:字段}`、`{range:字段}` 和 `{source:别名}`；`shop_product` 规则可应用到所有店铺商品表。仅将允许人工修改的字段加入 `backfill.json` 的 `fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`；修改 `货号` 时，应配置不会被编辑的稳定字段（如 `商品编码`）作为 `verify_fields`。
 
 ## 闭环使用
 
@@ -66,16 +75,6 @@ tests/              # 不依赖 Excel 的单元测试
 回填只允许写入 `config/backfill.json` 的 `fields`，默认按 `店铺 + SKUID` 定位并用稳定字段校验。写入前会创建 `.bak` 备份。不要在 Excel 中打开正在处理的文件。
 
 同一店铺和 SKUID 命中多个规则时，回填会合并各行的字段修改：不同字段可以同时回填；同一字段的不同修改值会报告冲突并停止该批次。回填后应重新执行 `normalize` 和 `filter`，下一轮使用新的筛选批次。
-
-## 配置维护
-
-- 在 `config/config.json` 的 `tables` 增删 ERP 或店铺表；店铺商品表和销售表设置相同的 `shop`。
-- 在 `normalize.json` 的 `rules` 配置 `format`（`text`/`number`）和 `function`（Excel 公式）动作；公式支持 `{this:字段}`、`{range:字段}`、`{source:别名}`。
-- 标准化规则按表分组：`rules` 中每项包含 `table` 和 `columns`，`columns` 内每项包含 `column`、`type`、`value`。同一表只配置一次，列规则按数组顺序保留；`shop_product` 可将规则应用到所有店铺商品表。
-- 在 `filter.json.filters` 配置条件和 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。
-- 只把允许人工修改的字段加入 `backfill.json` 的 `fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`。如果要修改 `货号`，请把不会被编辑的稳定字段（例如 `商品编码`）配置到 `verify_fields`。
-- 新增指标或筛选规则只需修改 JSON；所有配置文件保持展开缩进，不压缩成单行。
-- `missing_encoding` 可筛选 `商家SKU` 或 `货号` 为 `--` 的商品。修改筛选表中的编码后运行回填即可，无需重新导出原始表；回填后重新运行 `jdw normalize` 刷新标准化结果。
 
 ## 开发验证
 
