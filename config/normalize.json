@@ -1,20 +1,174 @@
 {
-  "paths": {"common_config": "config.json", "raw": "../data/raw", "normalize": "../data/normalize"},
-  "excel": {"default_sheet": "Sheet1", "header_row": 1, "overwrite": true},
-  "table_settings": {
-    "erp_inventory": {"sheet": "ERP库存", "output": "ERP库存.xlsx", "reference_range": "$A:$J"},
-    "erp_product": {"sheet": "Sheet1", "output": "ERP商品.xlsx", "reference_range": "$A:$M"},
-    "erp_ban": {"sheet": "Sheet1", "reference_range": "$A:$H"},
-    "erp_combo": {"sheet": "ERP组合", "output": "ERP组合.xlsx", "reference_range": "$A:$U"},
-    "baijilin_product": {"sheet": "0", "output": "百济林商品.xlsx"},
-    "baijilin_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
-    "jixitang_product": {"sheet": "0", "output": "济喜堂商品.xlsx"},
-    "jixitang_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
-    "jingxi_product": {"sheet": "0", "output": "京喜商品.xlsx"},
-    "jingxi_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
-    "yangsonghe_product": {"sheet": "0", "output": "养颂和商品.xlsx"},
-    "yangsonghe_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
-    "yikangmin_product": {"sheet": "0", "output": "易康民商品.xlsx"},
-    "yikangmin_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"}
-  }
+  "rules": [
+    {
+      "table": "erp_inventory",
+      "columns": [
+        {
+          "column": "商品代码",
+          "type": "format",
+          "value": "text"
+        }
+      ]
+    },
+    {
+      "table": "erp_product",
+      "columns": [
+        {
+          "column": "商品编码",
+          "type": "format",
+          "value": "text"
+        },
+        {
+          "column": "可用数量(A - B - C - D)",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_inventory},10,0),0)"
+        },
+        {
+          "column": "B2C控价金额",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},6,0),0)"
+        },
+        {
+          "column": "B2C是否禁售",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},7,0),0)"
+        }
+      ]
+    },
+    {
+      "table": "erp_combo",
+      "columns": [
+        {
+          "column": "组合商品代码",
+          "type": "format",
+          "value": "text"
+        },
+        {
+          "column": "商品代码",
+          "type": "format",
+          "value": "text"
+        },
+        {
+          "column": "数量",
+          "type": "format",
+          "value": "number"
+        },
+        {
+          "column": "进价",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},5,0),0)"
+        },
+        {
+          "column": "可用数量(A - B - C - D)",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},6,0),0)"
+        },
+        {
+          "column": "组合进价",
+          "type": "function",
+          "value": "=SUMIFS({range:单品进价小计},{range:组合商品代码},{this:组合商品代码})"
+        },
+        {
+          "column": "组合可用数量",
+          "type": "function",
+          "value": "=MINIFS({range:单品可拼套数},{range:组合商品代码},{this:组合商品代码})"
+        },
+        {
+          "column": "单品可拼套数",
+          "type": "function",
+          "value": "=IF({this:数量}>0,{this:可用数量(A - B - C - D)}/{this:数量},\"\")"
+        },
+        {
+          "column": "单品进价小计",
+          "type": "function",
+          "value": "={this:数量}*{this:进价}"
+        }
+      ]
+    },
+    {
+      "table": "shop_product",
+      "columns": [
+        {
+          "column": "商家SKU",
+          "type": "format",
+          "value": "text"
+        },
+        {
+          "column": "货号",
+          "type": "format",
+          "value": "text"
+        },
+        {
+          "column": "京东价",
+          "type": "format",
+          "value": "number"
+        },
+        {
+          "column": "商品总库存",
+          "type": "format",
+          "value": "number"
+        },
+        {
+          "column": "商品可用库存",
+          "type": "format",
+          "value": "number"
+        },
+        {
+          "column": "进价",
+          "type": "function",
+          "value": "=VLOOKUP({this:货号},{source:erp_product},5,0)"
+        },
+        {
+          "column": "可用数量(A - B - C - D)",
+          "type": "function",
+          "value": "=VLOOKUP({this:货号},{source:erp_product},6,0)"
+        },
+        {
+          "column": "B2C控价金额",
+          "type": "function",
+          "value": "=VLOOKUP({this:货号},{source:erp_product},12,0)"
+        },
+        {
+          "column": "B2C是否禁售",
+          "type": "function",
+          "value": "=VLOOKUP({this:货号},{source:erp_product},13,0)"
+        },
+        {
+          "column": "SKU进价",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},18,0),VLOOKUP({this:商家SKU},{source:erp_product},5,0))"
+        },
+        {
+          "column": "SKU可用数量",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},19,0),VLOOKUP({this:商家SKU},{source:erp_product},6,0))"
+        },
+        {
+          "column": "商品访客数",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},19,0),0)"
+        },
+        {
+          "column": "成交金额",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},7,0),0)"
+        },
+        {
+          "column": "成交客户数",
+          "type": "function",
+          "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},10,0),0)"
+        },
+        {
+          "column": "毛利额",
+          "type": "function",
+          "value": "={this:京东价}-{this:SKU进价}"
+        },
+        {
+          "column": "毛利率",
+          "type": "function",
+          "value": "={this:毛利额}/{this:京东价}"
+        }
+      ]
+    }
+  ]
 }

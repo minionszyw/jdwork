@@ -124,11 +124,9 @@ def matches_rule(row: dict[str, Any], rule: dict[str, Any]) -> bool:
 
 
 def validate_filter_config(config: dict[str, Any]) -> None:
-    paths = config.get("paths", {})
-    if not isinstance(paths, dict):
-        raise ValueError("paths 必须是对象")
-    if "norm_config" in paths:
-        raise ValueError("paths.norm_config 已停用，请改用 paths.normalize_config")
+    forbidden = sorted(set(config) & {"paths", "excel", "output", "backfill"})
+    if forbidden:
+        raise ValueError(f"filter.json 不应包含: {', '.join(forbidden)}")
     if not isinstance(config.get("filters"), list):
         raise ValueError("filter.json 必须包含 filters 数组")
     keys = set()
@@ -150,9 +148,11 @@ def validate_filter_config(config: dict[str, Any]) -> None:
                 raise ValueError(f"规则 {rule['key']} 使用未知操作符: {operator}")
             if operator in {"in", "not_in"} and not isinstance(condition.get("value"), list):
                 raise ValueError(f"规则 {rule['key']} 的 {operator} 条件必须使用数组 value")
-    backfill = config.get("backfill", {})
-    if not isinstance(backfill, dict):
-        raise ValueError("backfill 必须是对象")
+    # Backfill is validated by backfill.json and is intentionally independent.
+    return
+
+
+def validate_backfill_config(backfill: dict[str, Any]) -> None:
     fields = backfill.get("fields", [])
     if not isinstance(fields, list) or not fields or any(not isinstance(field, str) or not field for field in fields):
         raise ValueError("backfill.fields 必须是非空字符串数组")
@@ -182,12 +182,13 @@ def load_filter_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path
     config = read_json(path)
     validate_filter_config(config)
     base = path.parent.resolve()
-    normalize_config_path = source_path(base, config.get("paths", {}).get("normalize_config", "normalize.json"))
+    common = read_json(base / "config.json")
+    normalize_config_path = base / "normalize.json"
     normalize_config = normalize.load_config(normalize_config_path)
-    validate_backfill_fields(config, normalize_config)
-    normalize_base = normalize_config_path.parent.resolve()
-    normalize_dir = source_path(normalize_base, normalize_config.get("paths", {}).get("normalize", "../data/normalize")).resolve()
-    output_dir = source_path(base, config.get("paths", {}).get("output", "../data/filter")).resolve()
+    paths = common.get("paths", {})
+    normalize_dir = source_path(base, paths.get("normalize", "../data/normalize")).resolve()
+    output_dir = source_path(base, paths.get("filter", "../data/filter")).resolve()
+    config["sheet"] = common.get("sheet", {"default": "Sheet1"})
     return config, normalize_config, normalize_dir, output_dir
 
 
@@ -217,8 +218,8 @@ def filter_rows(config: dict[str, Any], normalize_config: dict[str, Any], normal
             runner,
             path,
             sheet,
-            config.get("excel", {}).get("default_sheet", "Sheet1"),
-            int(config.get("excel", {}).get("header_row", 1)),
+            config.get("sheet", {}).get("default", "Sheet1"),
+            1,
         )
         try:
             if output_headers is not None and output_headers[2:] != headers:
@@ -288,9 +289,9 @@ def run(config_path: Path, requested_batch_id: str | None) -> Path:
     try:
         headers, rows = filter_rows(config, normalize_config, normalize_dir, runner)
         identifier = batch_id(requested_batch_id)
-        filename = f"{config.get('output', {}).get('prefix', 'filter-')}{identifier}.xlsx"
+        filename = f"filter-{identifier}.xlsx"
         output_path = output_dir / filename
-        write_output(runner, output_path, headers, rows, bool(config.get("output", {}).get("overwrite", False)))
+        write_output(runner, output_path, headers, rows, False)
         print(f"筛选完成: {output_path} ({len(rows)} 行)")
         return output_path
     finally:

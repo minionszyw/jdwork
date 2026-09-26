@@ -73,8 +73,17 @@ def sheet_for(book: Any, requested: str | None, default: str) -> Any:
     for i in range(1, book.Worksheets.Count + 1):
         ws = book.Worksheets(i)
         used = ws.UsedRange
-        if used.Rows.Count > 1 and used.Columns.Count > 1:
-            return ws
+        try:
+            values = used.Value
+            raw = values if isinstance(values, tuple) else (values,)
+            flattened = []
+            for row in raw:
+                flattened.extend(row if isinstance(row, tuple) else (row,))
+            if any(value is not None and str(value).strip() for value in flattened):
+                return ws
+        except Exception:
+            if used.Rows.Count > 1 and used.Columns.Count > 1:
+                return ws
     return book.Worksheets(1)
 
 

@@ -1,0 +1,16 @@
+{
+  "key_fields": [
+    "SKUID"
+  ],
+  "verify_fields": [
+    "商品编码"
+  ],
+  "fields": [
+    "商品状态",
+    "商品总库存",
+    "京东价",
+    "商家SKU",
+    "货号"
+  ],
+  "backup": true
+}

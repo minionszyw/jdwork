@@ -1,4 +1,5 @@
 import json
+import copy
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,44 @@ from jdwork import normalize
 
 
 class NormalizeHelpersTest(unittest.TestCase):
+    def test_grouped_columns_preserve_runtime_order(self):
+        common = json.loads(Path("config/config.json").read_text(encoding="utf-8"))
+        config = json.loads(Path("config/normalize.json").read_text(encoding="utf-8"))
+        composed = normalize._compose_config(config, common)
+        for group in config["rules"]:
+            target = group["table"]
+            if target == "shop_product":
+                target = composed["sources"]["shops"][0]["product_table"]
+            runtime = composed["rules"][target]
+            for kind in ("text", "number"):
+                self.assertEqual(runtime[f"{kind}_columns"], [c["column"] for c in group["columns"] if c["type"] == "format" and c["value"] == kind])
+            self.assertEqual(runtime["lookups"], [{"column": c["column"], "formula": c["value"]} for c in group["columns"] if c["type"] == "function"])
+
+    def test_invalid_grouped_rules(self):
+        valid = {"rules": [{"table": "erp_product", "columns": [{"column": "code", "type": "format", "value": "text"}]}]}
+        cases = []
+        duplicate_table = copy.deepcopy(valid)
+        duplicate_table["rules"].append(copy.deepcopy(valid["rules"][0]))
+        cases.append(duplicate_table)
+        duplicate_column = copy.deepcopy(valid)
+        duplicate_column["rules"][0]["columns"] *= 2
+        cases.append(duplicate_column)
+        for field, value in (("type", "lookup"), ("value", "date"), ("column", "")):
+            invalid = copy.deepcopy(valid)
+            invalid["rules"][0]["columns"][0][field] = value
+            cases.append(invalid)
+        cases.append({"rules": [{"table": "erp_product", "column": "code", "type": "format", "value": "text"}]})
+        for config in cases:
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                normalize.validate_config(config)
+
+    def test_grouped_rules_reject_unknown_references(self):
+        common = json.loads(Path("config/config.json").read_text(encoding="utf-8"))
+        for table, formula in (("unknown", "=1"), ("erp_product", "=SUM({source:unknown})")):
+            config = {"rules": [{"table": table, "columns": [{"column": "metric", "type": "function", "value": formula}]}]}
+            with self.subTest(table=table), self.assertRaises(ValueError):
+                normalize._compose_config(config, common)
+
     def test_clean_text_preserves_leading_zero(self):
         self.assertEqual(normalize.clean_text("\t0020429\t"), "0020429")
         self.assertEqual(normalize.clean_text(10015.0), "10015")
@@ -45,9 +84,7 @@ class NormalizeHelpersTest(unittest.TestCase):
         self.assertIn("erp_product", config["rules"])
 
     def test_rejects_old_output_path_key(self):
-        with Path("config/normalize.json").open(encoding="utf-8") as handle:
-            config = json.load(handle)
-        config["paths"]["norm"] = "../norm"
+        config = {"paths": {"norm": "../norm"}, "rules": []}
         with self.assertRaisesRegex(ValueError, "paths.normalize"):
             normalize.validate_config(config)
 

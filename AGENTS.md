@@ -3,7 +3,7 @@
 ## Project Structure
 
 - `pyproject.toml` defines the installable package and `jdw` console entry point.
-- `config/` contains user-editable `normalize.json` and `filter.json`.
+- `config/` contains user-editable `config.json`, `normalize.json`, `filter.json`, and `backfill.json`.
 - `src/jdwork/` contains the CLI, shared Excel/config helpers, normalization, filtering, and backfill modules.
 - `tests/` contains Windows-independent unit tests. Excel COM integration checks use local workbooks.
 - `data/raw/`, `data/normalize/`, `data/filter/`, and `docs/` are local data/output directories excluded from Git.
@@ -47,7 +47,10 @@ The commands require Windows and Microsoft Excel. `normalize` and `filter` use E
 - Prefer reuse (Don't Repeat Yourself). Apply the Boy Scout Rule: leave touched code clearer, remove stale imports and update nearby docs/tests.
 - Keep business rules, formulas, paths, sheets, and writable fields in JSON configuration.
 - Preserve Chinese source field names exactly when they are configuration keys.
+- Keep every JSON configuration file expanded with indentation; do not compress objects or arrays onto one line.
+- Group `normalize.json` rules by table: each group contains `table` and `columns`; each column action contains `column`, `type`, and `value`. Preserve column order and avoid duplicate tables or columns within a group.
 - Keep CLI behavior in `cli.py`; command modules expose reusable `run` and `check` functions.
+- Commands use the fixed files in `config/`; shared paths and the default sheet belong in `config.json`, normalization rules in `normalize.json`, filters in `filter.json`, and backfill settings in `backfill.json`.
 
 ## Configuration-Driven Architecture
 
@@ -65,4 +68,4 @@ Use concise imperative commit subjects, such as `Add jdwork CLI package`. Keep e
 
 ## Security and Configuration
 
-Treat workbook contents and configured passwords as sensitive. Keep credentials out of committed JSON. Only fields listed in `config/filter.json` `backfill.fields` may be written back to raw files. `店铺`, `类型`, and `SKUID` are metadata/identity fields and cannot be written. Review the dry-run output before applying a batch.
+Treat workbook contents and configured passwords as sensitive. Keep credentials out of committed JSON. Only fields listed in `config/backfill.json` `fields` may be written back to raw files. `店铺`, `类型`, and `SKUID` are metadata/identity fields and cannot be written. Review the dry-run output before applying a batch.

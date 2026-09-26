@@ -40,15 +40,16 @@ def merge_verification(changes: dict[tuple[str, str], dict[str, Any]], row: dict
         target.setdefault(marker, []).append(value)
 
 
-def load_backfill_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path]:
+def load_backfill_config(path: Path) -> tuple[dict[str, Any], dict[str, Any], Path, dict[str, Any]]:
     config = read_json(path)
-    filter_module.validate_filter_config(config)
+    filter_module.validate_backfill_config(config)
     base = path.parent.resolve()
-    normalize_path = source_path(base, config.get("paths", {}).get("normalize_config", "normalize.json"))
+    common = read_json(base / "config.json")
+    normalize_path = base / "normalize.json"
     normalize_config = normalize.load_config(normalize_path)
-    filter_module.validate_backfill_fields(config, normalize_config)
-    raw_dir = source_path(normalize_path.parent.resolve(), normalize_config.get("paths", {}).get("raw", "../data/raw")).resolve()
-    return config, normalize_config, raw_dir
+    filter_module.validate_backfill_fields({"backfill": config}, normalize_config)
+    raw_dir = source_path(base, common.get("paths", {}).get("raw", "../data/raw")).resolve()
+    return config, normalize_config, raw_dir, common.get("sheet", {"default": "Sheet1"})
 
 
 def locate_shop(normalize_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -131,8 +132,9 @@ def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, 
 def find_latest_input(config: dict[str, Any], config_path: Path) -> Path:
     """Select the filter workbook with the greatest filename batch id."""
     base = config_path.parent.resolve()
-    output_dir = source_path(base, config.get("paths", {}).get("output", "../data/filter")).resolve()
-    prefix = str(config.get("output", {}).get("prefix", "filter-"))
+    common = read_json(base / "config.json")
+    output_dir = source_path(base, common.get("paths", {}).get("filter", "../data/filter")).resolve()
+    prefix = "filter-"
     pattern = re.compile(rf"^{re.escape(prefix)}(\d{{14}})\.xlsx$")
     candidates: list[tuple[str, Path]] = []
     if output_dir.exists():
@@ -150,14 +152,14 @@ def find_latest_input(config: dict[str, Any], config_path: Path) -> Path:
 
 
 def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
-    config, normalize_config, raw_dir = load_backfill_config(config_path)
+    config, normalize_config, raw_dir, sheet = load_backfill_config(config_path)
     if input_path is None:
         input_path = find_latest_input(config, config_path)
     else:
         input_path = input_path.resolve()
     print(f"使用筛选文件: {input_path}")
-    fields = config.get("backfill", {}).get("fields", [])
-    verify_fields = config.get("backfill", {}).get("verify_fields", ["货号"])
+    fields = config.get("fields", [])
+    verify_fields = config.get("verify_fields", ["货号"])
     if not fields:
         raise ValueError("backfill.fields 不能为空")
     runner = normalize.ExcelRunner()
@@ -165,8 +167,8 @@ def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
         book, headers, rows = read_filter_rows(
             runner,
             input_path,
-            config.get("output", {}).get("sheet"),
-            int(config.get("output", {}).get("header_row", 1)),
+            sheet.get("default", "Sheet1"),
+            1,
         )
         try:
             required = ["店铺", "类型", "SKUID", *verify_fields, *fields]
@@ -187,12 +189,12 @@ def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
                 raise ValueError(f"normalize.json 中找不到店铺: {shop}")
             grouped.setdefault(shop, {})[skuid] = update
         total = 0
-        raw_header_row = int(normalize_config.get("excel", {}).get("header_row", 1))
+        raw_header_row = 1
         for shop_name, updates in grouped.items():
             shop = shops[shop_name]
             rule = normalize_config["rules"][shop.get("product_table", shop.get("rule", "shop_product"))]
             text_fields = set(rule.get("text_columns", []))
-            total += process_store(runner, raw_dir, shop, updates, verify_fields, text_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
+            total += process_store(runner, raw_dir, shop, updates, verify_fields, text_fields, dry_run, bool(config.get("backup", True)), raw_header_row)
         print(f"{'预览' if dry_run else '回填'}完成，共 {total} 个字段变更")
         return total
     finally:

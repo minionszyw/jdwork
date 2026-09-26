@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from jdwork import cli
 from jdwork.config import resolve_config_path
-from jdwork.filtering import values_from_range, validate_filter_config
+from jdwork.filtering import values_from_range, validate_filter_config, validate_backfill_config
 
 
 class CliTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class CliTest(unittest.TestCase):
                 run.assert_called_once_with(root / "config" / "filter.json", "20260923150000")
             with patch("jdwork.config.Path.cwd", return_value=root), patch("jdwork.backfill.run") as run:
                 self.assertEqual(cli.main(["backfill", "--dry-run"]), 0)
-                run.assert_called_once_with(root / "config" / "filter.json", None, True)
+                run.assert_called_once_with(root / "config" / "backfill.json", None, True)
 
     def test_backfill_input_is_optional(self):
         self.assertIsNone(cli.build_parser().parse_args(["backfill"]).input)
@@ -48,9 +48,9 @@ class FilterConfigTest(unittest.TestCase):
         with Path("config/filter.json").open(encoding="utf-8") as handle:
             validate_filter_config(json.load(handle))
 
-    def test_rejects_old_normalize_config_key(self):
-        with self.assertRaisesRegex(ValueError, "normalize_config"):
-            validate_filter_config({"paths": {"norm_config": "norm.json"}, "filters": []})
+    def test_rejects_filter_process_settings(self):
+        with self.assertRaisesRegex(ValueError, "paths"):
+            validate_filter_config({"paths": {"filter": "../data/filter"}, "filters": []})
 
     def test_rejects_unknown_operator(self):
         config = {"filters": [{"key": "x", "name": "X", "conditions": [{"field": "状态", "operator": "wrong"}]}]}
@@ -60,14 +60,14 @@ class FilterConfigTest(unittest.TestCase):
     def test_rejects_unsafe_backfill_field(self):
         config = {"filters": [], "backfill": {"fields": ["商品状态", "店铺"]}}
         with self.assertRaisesRegex(ValueError, "定位/元数据"):
-            validate_filter_config(config)
+            validate_backfill_config(config["backfill"])
 
     def test_allows_encoding_fields_with_stable_verification(self):
         config = {
             "filters": [],
             "backfill": {"fields": ["商家SKU", "货号"], "verify_fields": ["商品编码"]},
         }
-        validate_filter_config(config)
+        validate_backfill_config(config["backfill"])
 
     def test_rejects_backfill_verify_overlap(self):
         config = {
@@ -75,12 +75,12 @@ class FilterConfigTest(unittest.TestCase):
             "backfill": {"fields": ["货号"], "verify_fields": ["货号"]},
         }
         with self.assertRaisesRegex(ValueError, "校验字段"):
-            validate_filter_config(config)
+            validate_backfill_config(config["backfill"])
 
     def test_rejects_empty_backfill_fields(self):
         config = {"filters": [], "backfill": {"fields": []}}
         with self.assertRaisesRegex(ValueError, "非空"):
-            validate_filter_config(config)
+            validate_backfill_config(config["backfill"])
 
 
 if __name__ == "__main__":

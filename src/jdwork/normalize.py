@@ -51,6 +51,47 @@ def rule_fields(rule: dict[str, Any]) -> list[str]:
     return [item["column"] for item in rule.get("lookups", []) + rule.get("calculations", [])]
 
 
+def grouped_actions(config: dict[str, Any]) -> list[dict[str, str]]:
+    """Validate table groups and flatten them for the shared runtime model."""
+    groups = config.get("rules")
+    if not isinstance(groups, list):
+        raise ValueError("normalize.json 必须包含 rules 数组")
+    actions: list[dict[str, str]] = []
+    seen_tables: set[str] = set()
+    for index, group in enumerate(groups):
+        prefix = f"rules[{index}]"
+        if not isinstance(group, dict) or set(group) != {"table", "columns"}:
+            raise ValueError(f"{prefix} 只能包含 table 和 columns")
+        table = group["table"]
+        if not isinstance(table, str) or not table.strip():
+            raise ValueError(f"{prefix}.table 必须是非空字符串")
+        if table in seen_tables:
+            raise ValueError(f"table 重复: {table}")
+        seen_tables.add(table)
+        if not isinstance(group["columns"], list):
+            raise ValueError(f"{prefix}.columns 必须是数组")
+        seen_columns: set[str] = set()
+        for position, column in enumerate(group["columns"]):
+            location = f"{prefix}.columns[{position}]"
+            if not isinstance(column, dict) or set(column) != {"column", "type", "value"}:
+                raise ValueError(f"{location} 只能包含 column、type、value")
+            name = column["column"]
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"{location}.column 必须是非空字符串")
+            if name in seen_columns:
+                raise ValueError(f"{table} 的 column 重复: {name}")
+            seen_columns.add(name)
+            kind, value = column["type"], column["value"]
+            if kind not in ("format", "function"):
+                raise ValueError(f"{location}.type 必须是 format 或 function")
+            if kind == "format" and value not in ("text", "number"):
+                raise ValueError(f"{location}.value 必须是 text 或 number")
+            if kind == "function" and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{location}.value 必须是非空 Excel 公式")
+            actions.append({"table": table, **column})
+    return actions
+
+
 def validate_config(config: dict[str, Any]) -> None:
     if "tables" in config:
         validate_common_config(config)
@@ -63,6 +104,11 @@ def validate_config(config: dict[str, Any]) -> None:
             common_path = Path.cwd() / "config" / config["paths"]["common_config"]
         if common_path.exists():
             validate_common_config(read_json(common_path))
+        return
+    if "sources" not in config and "rules" in config:
+        if "norm" in config.get("paths", {}):
+            raise ValueError("paths.norm 已停用，请改用 paths.normalize")
+        grouped_actions(config)
         return
     errors: list[str] = []
     paths = config.get("paths", {})
@@ -138,21 +184,29 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def validate_common_config(config: dict[str, Any]) -> None:
+    paths = config.get("paths")
+    if not isinstance(paths, dict) or any(not paths.get(key) for key in ("raw", "normalize", "filter")):
+        raise ValueError("公共配置 paths 必须包含 raw、normalize、filter")
+    sheet = config.get("sheet")
+    if not isinstance(sheet, dict) or not sheet.get("default"):
+        raise ValueError("公共配置 sheet.default 必须是非空字符串")
     tables = config.get("tables")
     rules = config.get("rules")
     if not isinstance(tables, list) or not tables:
         raise ValueError("公共配置必须包含非空 tables 数组")
-    if not isinstance(rules, list):
-        raise ValueError("公共配置必须包含 rules 数组")
+    if rules is not None and not isinstance(rules, list):
+        raise ValueError("rules 必须是数组")
     names: set[str] = set()
     shops: dict[str, list[str]] = {}
     for index, item in enumerate(tables):
         prefix = f"tables[{index}]"
         if not isinstance(item, dict):
             raise ValueError(f"{prefix} 必须是对象")
-        missing = [key for key in ("table", "name", "type", "file") if not item.get(key)]
+        missing = [key for key in ("table", "name", "type", "file", "shop") if key not in item or not isinstance(item[key], str)]
         if missing:
             raise ValueError(f"{prefix} 缺少字段: {', '.join(missing)}")
+        if set(item) != {"table", "name", "type", "file", "shop"}:
+            raise ValueError(f"{prefix} 只能包含 table、name、type、file、shop")
         table = str(item["table"])
         if table in names:
             raise ValueError(f"table 重复: {table}")
@@ -168,7 +222,7 @@ def validate_common_config(config: dict[str, Any]) -> None:
     for shop, kinds in shops.items():
         if len(kinds) != len(set(kinds)):
             raise ValueError(f"店铺 {shop} 的商品/销售表类型重复")
-    for index, item in enumerate(rules):
+    for index, item in enumerate(rules or []):
         prefix = f"rules[{index}]"
         if not isinstance(item, dict) or not item.get("table") or not item.get("column"):
             raise ValueError(f"{prefix} 必须包含 table 和 column")
@@ -314,7 +368,7 @@ def make_sources(
         refs[name] = external_ref(path, item.get("sheet") or default_sheet, item.get("reference_range", "$A:$XFD"))
     if shop and shop.get("sales"):
         sales = source_path(raw_dir, shop, "sales")
-        reference = external_ref(sales, shop.get("sales_sheet") or default_sheet, shop.get("sales_reference_range", "$A:$XFD"))
+        reference = external_ref(sales, shop.get("sales_sheet") or default_sheet, shop.get("sales_reference_range", "$B:$T"))
         refs["sales"] = reference
         if shop.get("sales_table"):
             refs[shop["sales_table"]] = reference
@@ -434,21 +488,24 @@ def check_inputs(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], ru
         print(f"检查: {shop['name']} 商品 [{product_sheet}]{sales_label}")
 
 
-def _compose_config(specialized: dict[str, Any], common: dict[str, Any], base: Path) -> dict[str, Any]:
+def _compose_config(specialized: dict[str, Any], common: dict[str, Any]) -> dict[str, Any]:
     validate_common_config(common)
-    settings = specialized.get("table_settings", {})
-    if not isinstance(settings, dict):
-        raise ValueError("normalize.json 的 table_settings 必须是对象")
+    rules_config = grouped_actions(specialized)
     table_names = {item["table"] for item in common["tables"]}
-    unknown_settings = sorted(set(settings) - table_names)
-    if unknown_settings:
-        raise ValueError(f"table_settings 引用了不存在的 table: {', '.join(unknown_settings)}")
+    source_names = table_names | {"sales"}
+    for action in rules_config:
+        if action["table"] not in table_names and action["table"] not in TABLE_TYPES:
+            raise ValueError(f"规则引用了不存在的 table: {action['table']}")
+        if action["type"] == "function":
+            aliases = re.findall(r"\{source:([^{}]+)\}", action["value"])
+            unknown = sorted(set(aliases) - source_names)
+            if unknown:
+                raise ValueError(f"规则 {action['table']}.{action['column']} 使用未知数据源: {', '.join(unknown)}")
     sources: dict[str, Any] = {}
     shops: dict[str, dict[str, Any]] = {}
     for table in common["tables"]:
         alias = table["table"]
         item = dict(table)
-        item.update(settings.get(alias, {}))
         kind = table["type"]
         if kind == "erp":
             sources[alias] = item
@@ -457,26 +514,18 @@ def _compose_config(specialized: dict[str, Any], common: dict[str, Any], base: P
             shop.update({"product": table["file"], "product_table": alias})
             if "enabled" in item:
                 shop["enabled"] = item["enabled"]
-            for key in ("sheet", "password"):
-                if key in item:
-                    shop[f"product_{key}"] = item[key]
-            if "output" in item:
-                shop["output"] = item["output"]
         elif kind == "shop_sales":
             shop = shops.setdefault(table["shop"], {"name": table["shop"]})
             shop.update({"sales": table["file"], "sales_table": alias})
             if "enabled" in item:
                 shop["enabled"] = item["enabled"]
-            for key in ("sheet", "password", "reference_range"):
-                if key in item:
-                    shop[f"sales_{key}"] = item[key]
     sources["shops"] = list(shops.values())
     rules: dict[str, dict[str, Any]] = {}
     table_targets = {
         kind: [item["table"] for item in common["tables"] if item["type"] == kind]
         for kind in TABLE_TYPES
     }
-    for action in common["rules"]:
+    for action in rules_config:
         targets = table_targets.get(action["table"], [action["table"]])
         for target in targets:
             rule = rules.setdefault(target, {"text_columns": [], "number_columns": [], "lookups": [], "calculations": []})
@@ -484,12 +533,15 @@ def _compose_config(specialized: dict[str, Any], common: dict[str, Any], base: P
                 rule[f"{action['value']}_columns"].append(action["column"])
             else:
                 formula = {"column": action["column"], "formula": action["value"]}
-                if action.get("number_format"):
-                    formula["number_format"] = action["number_format"]
                 rule["lookups"].append(formula)
     composed = dict(specialized)
+    composed["paths"] = common.get("paths", {})
+    composed["sheet"] = common.get("sheet", {"default": "Sheet1"})
     composed["sources"] = sources
     composed["rules"] = rules
+    for name, item in sources.items():
+        if name != "shops" and name in rules:
+            item["output"] = f"{Path(item['file']).stem}.xlsx"
     return composed
 
 
@@ -498,9 +550,9 @@ def load_config(path: Path) -> dict[str, Any]:
     if "tables" in config:
         validate_common_config(config)
         return config
-    common_path = source_path(path.parent.resolve(), config.get("paths", {}).get("common_config", "config.json"))
+    common_path = path.parent.resolve() / "config.json"
     common = read_json(common_path)
-    config = _compose_config(config, common, path.parent.resolve())
+    config = _compose_config(config, common)
     return config
 
 
@@ -512,7 +564,7 @@ def context(config_path: Path) -> tuple[dict[str, Any], Path, Path, dict[str, An
     normalize_value = paths.get("normalize", "../data/normalize")
     raw_dir = source_path(base, raw_value)
     normalize_dir = source_path(base, normalize_value)
-    defaults = {"default_sheet": "Sheet1", "header_row": 1, "overwrite": True, **config.get("excel", {})}
+    defaults = {"default_sheet": config.get("sheet", {}).get("default", "Sheet1"), "header_row": 1, "overwrite": True}
     return config, raw_dir.resolve(), normalize_dir.resolve(), defaults
 
 
