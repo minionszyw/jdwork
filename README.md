@@ -54,11 +54,16 @@ tests/              # 不依赖 Excel 的单元测试
 4. 人工修改筛选表后先预览回填，再应用：
 
    ```powershell
-   jdw backfill --input .\data\filter\filter-20260923150000.xlsx --dry-run
-   jdw backfill --input .\data\filter\filter-20260923150000.xlsx
+   jdw backfill --dry-run
+   jdw backfill
    ```
 
+   省略 `--input` 时，命令会在 `data/filter/` 中按文件名批次号选择最大的
+   `filter-{14 位 batch_id}.xlsx`。也可以显式指定某个筛选文件。
+
 回填只允许写入 `config/filter.json` 的 `backfill.fields`，默认按 `店铺 + SKUID` 定位并用稳定字段校验。写入前会创建 `.bak` 备份。不要在 Excel 中打开正在处理的文件。
+
+同一店铺和 SKUID 命中多个规则时，回填会合并各行的字段修改：不同字段可以同时回填；同一字段的不同修改值会报告冲突并停止该批次。回填后应重新执行 `normalize` 和 `filter`，下一轮使用新的筛选批次。
 
 ## 配置维护
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -127,8 +128,34 @@ def process_store(runner: normalize.ExcelRunner, raw_dir: Path, shop: dict[str, 
         runner.close(book, False)
 
 
-def run(config_path: Path, input_path: Path, dry_run: bool) -> int:
+def find_latest_input(config: dict[str, Any], config_path: Path) -> Path:
+    """Select the filter workbook with the greatest filename batch id."""
+    base = config_path.parent.resolve()
+    output_dir = source_path(base, config.get("paths", {}).get("output", "../data/filter")).resolve()
+    prefix = str(config.get("output", {}).get("prefix", "filter-"))
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d{{14}})\.xlsx$")
+    candidates: list[tuple[str, Path]] = []
+    if output_dir.exists():
+        for path in output_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = pattern.fullmatch(path.name)
+            if match:
+                candidates.append((match.group(1), path))
+    if not candidates:
+        raise FileNotFoundError(
+            f"找不到筛选文件: {output_dir}\\{prefix}{{14 位 batch_id}}.xlsx"
+        )
+    return max(candidates, key=lambda item: item[0])[1].resolve()
+
+
+def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
     config, normalize_config, raw_dir = load_backfill_config(config_path)
+    if input_path is None:
+        input_path = find_latest_input(config, config_path)
+    else:
+        input_path = input_path.resolve()
+    print(f"使用筛选文件: {input_path}")
     fields = config.get("backfill", {}).get("fields", [])
     verify_fields = config.get("backfill", {}).get("verify_fields", ["货号"])
     if not fields:

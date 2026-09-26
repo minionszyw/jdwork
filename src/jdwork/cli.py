@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     backfill = commands.add_parser("backfill", help="将人工修改回填到 raw 店铺表")
     backfill.add_argument("-c", "--config", help="配置文件路径，默认 config/filter.json")
-    backfill.add_argument("-i", "--input", required=True, help="data/filter/filter-{batch_id}.xlsx")
+    backfill.add_argument("-i", "--input", help="指定 data/filter/filter-{batch_id}.xlsx；省略时自动选择最新批次")
     backfill.add_argument("--dry-run", action="store_true", help="只预览变更，不保存 raw")
     return parser
 
@@ -49,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from . import backfill
 
             config_path = resolve_config_path(args.config, "filter")
-            backfill.run(config_path, Path(args.input).resolve(), args.dry_run)
+            backfill.run(config_path, Path(args.input) if args.input else None, args.dry_run)
         else:  # argparse enforces this; retained for type checkers.
             raise ValueError(f"未知命令: {args.command}")
         return 0

@@ -1,5 +1,6 @@
 import unittest
 import json
+import tempfile
 from pathlib import Path
 
 from jdwork import backfill
@@ -7,6 +8,17 @@ from jdwork import filtering as filter_module
 
 
 class FilterRulesTest(unittest.TestCase):
+    def test_find_latest_input_uses_batch_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "filter"
+            output.mkdir()
+            (output / "filter-20260101000000.xlsx").touch()
+            (output / "filter-20260201000000.xlsx").touch()
+            (output / "filter-20260201000000.tmp.xlsx").touch()
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps({"paths": {"output": "filter"}, "output": {"prefix": "filter-"}}), encoding="utf-8")
+            self.assertEqual(backfill.find_latest_input(json.loads(config_path.read_text(encoding="utf-8")), config_path), output / "filter-20260201000000.xlsx")
     def test_operators(self):
         self.assertTrue(filter_module.apply_operator("上架", "eq", "上架"))
         self.assertTrue(filter_module.apply_operator(9, "lt", 10))

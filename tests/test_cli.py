@@ -1,5 +1,3 @@
-import contextlib
-import io
 import json
 import tempfile
 import unittest
@@ -27,11 +25,12 @@ class CliTest(unittest.TestCase):
             with patch("jdwork.config.Path.cwd", return_value=root), patch("jdwork.filtering.run") as run:
                 self.assertEqual(cli.main(["filter", "--batch-id", "20260923150000"]), 0)
                 run.assert_called_once_with(root / "config" / "filter.json", "20260923150000")
+            with patch("jdwork.config.Path.cwd", return_value=root), patch("jdwork.backfill.run") as run:
+                self.assertEqual(cli.main(["backfill", "--dry-run"]), 0)
+                run.assert_called_once_with(root / "config" / "filter.json", None, True)
 
-    def test_backfill_requires_input(self):
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                cli.build_parser().parse_args(["backfill"])
+    def test_backfill_input_is_optional(self):
+        self.assertIsNone(cli.build_parser().parse_args(["backfill"]).input)
 
 
 class RangeShapeTest(unittest.TestCase):
