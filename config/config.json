@@ -1,0 +1,281 @@
+{
+  "tables": [
+    {
+      "table": "erp_inventory",
+      "name": "ERP库存",
+      "type": "erp",
+      "file": "ERP库存.csv"
+    },
+    {
+      "table": "erp_product",
+      "name": "ERP商品",
+      "type": "erp",
+      "file": "ERP商品.xlsx"
+    },
+    {
+      "table": "erp_ban",
+      "name": "ERP禁售",
+      "type": "erp",
+      "file": "ERP禁售.xlsx"
+    },
+    {
+      "table": "erp_combo",
+      "name": "ERP组合",
+      "type": "erp",
+      "file": "ERP组合.csv"
+    },
+    {
+      "table": "baijilin_product",
+      "name": "百济林商品",
+      "type": "shop_product",
+      "file": "百济林商品.xlsx",
+      "shop": "百济林"
+    },
+    {
+      "table": "baijilin_sales",
+      "name": "百济林销售",
+      "type": "shop_sales",
+      "file": "百济林销售.xlsx",
+      "shop": "百济林"
+    },
+    {
+      "table": "jixitang_product",
+      "name": "济喜堂商品",
+      "type": "shop_product",
+      "file": "济喜堂商品.xlsx",
+      "shop": "济喜堂"
+    },
+    {
+      "table": "jixitang_sales",
+      "name": "济喜堂销售",
+      "type": "shop_sales",
+      "file": "济喜堂销售.xlsx",
+      "shop": "济喜堂"
+    },
+    {
+      "table": "jingxi_product",
+      "name": "京喜商品",
+      "type": "shop_product",
+      "file": "京喜商品.xlsx",
+      "shop": "京喜"
+    },
+    {
+      "table": "jingxi_sales",
+      "name": "京喜销售",
+      "type": "shop_sales",
+      "file": "京喜销售.xlsx",
+      "shop": "京喜"
+    },
+    {
+      "table": "yangsonghe_product",
+      "name": "养颂和商品",
+      "type": "shop_product",
+      "file": "养颂和商品.xlsx",
+      "shop": "养颂和"
+    },
+    {
+      "table": "yangsonghe_sales",
+      "name": "养颂和销售",
+      "type": "shop_sales",
+      "file": "养颂和销售.xlsx",
+      "shop": "养颂和"
+    },
+    {
+      "table": "yikangmin_product",
+      "name": "易康民商品",
+      "type": "shop_product",
+      "file": "易康民商品.xlsx",
+      "shop": "易康民"
+    },
+    {
+      "table": "yikangmin_sales",
+      "name": "易康民销售",
+      "type": "shop_sales",
+      "file": "易康民销售.xlsx",
+      "shop": "易康民"
+    }
+  ],
+  "rules": [
+    {
+      "table": "erp_inventory",
+      "column": "商品代码",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "erp_product",
+      "column": "商品编码",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "erp_product",
+      "column": "可用数量(A - B - C - D)",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_inventory},10,0),0)"
+    },
+    {
+      "table": "erp_product",
+      "column": "B2C控价金额",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},6,0),0)"
+    },
+    {
+      "table": "erp_product",
+      "column": "B2C是否禁售",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},7,0),0)"
+    },
+    {
+      "table": "erp_combo",
+      "column": "组合商品代码",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "erp_combo",
+      "column": "商品代码",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "erp_combo",
+      "column": "数量",
+      "type": "format",
+      "value": "number"
+    },
+    {
+      "table": "erp_combo",
+      "column": "进价",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},5,0),0)"
+    },
+    {
+      "table": "erp_combo",
+      "column": "可用数量(A - B - C - D)",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},6,0),0)"
+    },
+    {
+      "table": "erp_combo",
+      "column": "组合进价",
+      "type": "function",
+      "value": "=SUMIFS({range:单品进价小计},{range:组合商品代码},{this:组合商品代码})"
+    },
+    {
+      "table": "erp_combo",
+      "column": "组合可用数量",
+      "type": "function",
+      "value": "=MINIFS({range:单品可拼套数},{range:组合商品代码},{this:组合商品代码})"
+    },
+    {
+      "table": "erp_combo",
+      "column": "单品可拼套数",
+      "type": "function",
+      "value": "=IF({this:数量}>0,{this:可用数量(A - B - C - D)}/{this:数量},\"\")"
+    },
+    {
+      "table": "erp_combo",
+      "column": "单品进价小计",
+      "type": "function",
+      "value": "={this:数量}*{this:进价}"
+    },
+    {
+      "table": "shop_product",
+      "column": "商家SKU",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "shop_product",
+      "column": "货号",
+      "type": "format",
+      "value": "text"
+    },
+    {
+      "table": "shop_product",
+      "column": "京东价",
+      "type": "format",
+      "value": "number"
+    },
+    {
+      "table": "shop_product",
+      "column": "商品总库存",
+      "type": "format",
+      "value": "number"
+    },
+    {
+      "table": "shop_product",
+      "column": "商品可用库存",
+      "type": "format",
+      "value": "number"
+    },
+    {
+      "table": "shop_product",
+      "column": "进价",
+      "type": "function",
+      "value": "=VLOOKUP({this:货号},{source:erp_product},5,0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "可用数量(A - B - C - D)",
+      "type": "function",
+      "value": "=VLOOKUP({this:货号},{source:erp_product},6,0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "B2C控价金额",
+      "type": "function",
+      "value": "=VLOOKUP({this:货号},{source:erp_product},12,0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "B2C是否禁售",
+      "type": "function",
+      "value": "=VLOOKUP({this:货号},{source:erp_product},13,0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "SKU进价",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},18,0),VLOOKUP({this:商家SKU},{source:erp_product},5,0))"
+    },
+    {
+      "table": "shop_product",
+      "column": "SKU可用数量",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},19,0),VLOOKUP({this:商家SKU},{source:erp_product},6,0))"
+    },
+    {
+      "table": "shop_product",
+      "column": "商品访客数",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},19,0),0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "成交金额",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},7,0),0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "成交客户数",
+      "type": "function",
+      "value": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},10,0),0)"
+    },
+    {
+      "table": "shop_product",
+      "column": "毛利额",
+      "type": "function",
+      "value": "={this:京东价}-{this:SKU进价}"
+    },
+    {
+      "table": "shop_product",
+      "column": "毛利率",
+      "type": "function",
+      "value": "={this:毛利额}/{this:京东价}",
+      "number_format": "0.0%"
+    }
+  ]
+}

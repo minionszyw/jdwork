@@ -23,7 +23,7 @@ py -m pip install -e .
 ## 目录
 
 ```text
-config/             # normalize.json、filter.json
+config/             # config.json 公共配置、normalize.json、filter.json 流程配置
 data/raw/           # ERP/店铺导出的原始表（不提交 Git）
 data/normalize/     # 标准化结果（不提交 Git）
 data/filter/        # 筛选批次（不提交 Git）
@@ -32,6 +32,8 @@ tests/              # 不依赖 Excel 的单元测试
 ```
 
 `config/` 中的相对路径以各自配置文件所在目录为基准，因此项目目录下的数据路径写为 `../data/raw`、`../data/normalize`、`../data/filter`。
+
+`config/config.json` 是跨 ERP 和平台通用的配置，使用 `tables` 描述输入表，使用 `rules` 描述格式化和公式动作。每条 table 记录至少包含 `table`、`name`、`type`、`file`；店铺商品表和销售表另外使用相同的 `shop` 值关联。`type` 支持 `erp`、`shop_product`、`shop_sales`。`normalize.json` 只配置路径、Excel 专用信息和每张表的 sheet/输出文件；`filter.json` 只配置筛选和回填。
 
 ## 闭环使用
 
@@ -67,8 +69,8 @@ tests/              # 不依赖 Excel 的单元测试
 
 ## 配置维护
 
-- 在 `sources.shops` 增删店铺；设置 `enabled: false` 可停用。
-- 在 `rules` 配置文本、数字、查找和计算字段；公式支持 `{this:字段}`、`{range:字段}`、`{source:别名}`。
+- 在 `config.json` 的 `tables` 增删 ERP 或店铺表；店铺商品表和销售表设置相同的 `shop`。
+- 在 `config.json` 的 `rules` 配置 `format`（`text`/`number`）和 `function`（Excel 公式）动作；公式支持 `{this:字段}`、`{range:字段}`、`{source:别名}`。
 - 在 `filter.json.filters` 配置条件和 `eq/ne/lt/lte/gt/gte/in/not_in/contains/is_empty` 等操作符。
 - 只把允许人工修改的字段加入 `backfill.fields`，不要加入公式列、`店铺`、`类型` 或 `SKUID`。如果要修改 `货号`，请把不会被编辑的稳定字段（例如 `商品编码`）配置到 `backfill.verify_fields`。
 - 新增指标或筛选规则只需修改 JSON；Python 模块提供通用格式化、公式、筛选和回填能力。

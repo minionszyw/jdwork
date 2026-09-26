@@ -171,7 +171,7 @@ def validate_filter_config(config: dict[str, Any]) -> None:
 def validate_backfill_fields(config: dict[str, Any], normalize_config: dict[str, Any]) -> None:
     writable = set(config.get("backfill", {}).get("fields", []))
     for shop in normalize_config["sources"].get("shops", []):
-        selected = shop.get("rule", "shop_product")
+        selected = shop.get("product_table", shop.get("rule", "shop_product"))
         calculated = set(normalize.rule_fields(normalize_config["rules"][selected]))
         overlap = sorted(writable & calculated)
         if overlap:

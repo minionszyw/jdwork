@@ -1,71 +1,20 @@
 {
-  "paths": {
-    "raw": "../data/raw",
-    "normalize": "../data/normalize"
-  },
-  "excel": {
-    "default_sheet": "Sheet1",
-    "header_row": 1,
-    "overwrite": true
-  },
-  "sources": {
-    "erp_inventory": {"file": "ERP库存.csv", "sheet": "ERP库存", "output": "ERP库存.xlsx", "reference_range": "$A:$J"},
-    "erp_product": {"file": "ERP商品.xlsx", "sheet": "Sheet1", "output": "ERP商品.xlsx", "reference_range": "$A:$M"},
-    "erp_ban": {"file": "ERP禁售.xlsx", "sheet": "Sheet1", "reference_range": "$A:$H"},
-    "erp_combo": {"file": "ERP组合.csv", "sheet": "ERP组合", "output": "ERP组合.xlsx", "reference_range": "$A:$U"},
-    "shops": [
-      {"name": "百济林", "product": "百济林商品.xlsx", "product_sheet": "0", "sales": "百济林销售.xlsx", "sales_sheet": "Sheet1", "rule": "shop_product", "sales_reference_range": "$B:$T"},
-      {"name": "济喜堂", "product": "济喜堂商品.xlsx", "product_sheet": "0", "sales": "济喜堂销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
-      {"name": "京喜", "product": "京喜商品.xlsx", "product_sheet": "0", "sales": "京喜销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
-      {"name": "养颂和", "product": "养颂和商品.xlsx", "product_sheet": "0", "sales": "养颂和销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"},
-      {"name": "易康民", "product": "易康民商品.xlsx", "product_sheet": "0", "sales": "易康民销售.xlsx", "rule": "shop_product", "sales_reference_range": "$B:$T"}
-    ]
-  },
-  "rules": {
-    "erp_inventory": {
-      "text_columns": ["商品代码"]
-    },
-    "erp_product": {
-      "text_columns": ["商品编码"],
-      "lookups": [
-        {"column": "可用数量(A - B - C - D)", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_inventory},10,0),0)"},
-        {"column": "B2C控价金额", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},6,0),0)"},
-        {"column": "B2C是否禁售", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:erp_ban},7,0),0)"}
-      ]
-    },
-    "erp_combo": {
-      "text_columns": ["组合商品代码", "商品代码"],
-      "number_columns": ["数量"],
-      "lookups": [
-        {"column": "进价", "formula": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},5,0),0)"},
-        {"column": "可用数量(A - B - C - D)", "formula": "=IFERROR(VLOOKUP({this:商品代码},{source:erp_product},6,0),0)"}
-      ],
-      "calculations": [
-        {"column": "组合进价", "formula": "=SUMIFS({range:单品进价小计},{range:组合商品代码},{this:组合商品代码})"},
-        {"column": "组合可用数量", "formula": "=MINIFS({range:单品可拼套数},{range:组合商品代码},{this:组合商品代码})"},
-        {"column": "单品可拼套数", "formula": "=IF({this:数量}>0,{this:可用数量(A - B - C - D)}/{this:数量},\"\")"},
-        {"column": "单品进价小计", "formula": "={this:数量}*{this:进价}"}
-      ]
-    },
-    "shop_product": {
-      "text_columns": ["商家SKU", "货号"],
-      "number_columns": ["京东价", "商品总库存", "商品可用库存"],
-      "output_columns": ["进价", "可用数量(A - B - C - D)", "B2C控价金额", "B2C是否禁售", "SKU进价", "SKU可用数量", "毛利额", "毛利率", "商品访客数", "成交金额", "成交客户数"],
-      "lookups": [
-        {"column": "进价", "formula": "=VLOOKUP({this:货号},{source:erp_product},5,0)"},
-        {"column": "可用数量(A - B - C - D)", "formula": "=VLOOKUP({this:货号},{source:erp_product},6,0)"},
-        {"column": "B2C控价金额", "formula": "=VLOOKUP({this:货号},{source:erp_product},12,0)"},
-        {"column": "B2C是否禁售", "formula": "=VLOOKUP({this:货号},{source:erp_product},13,0)"},
-        {"column": "SKU进价", "formula": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},18,0),VLOOKUP({this:商家SKU},{source:erp_product},5,0))"},
-        {"column": "SKU可用数量", "formula": "=IFERROR(VLOOKUP({this:商家SKU},{source:erp_combo},19,0),VLOOKUP({this:商家SKU},{source:erp_product},6,0))"},
-        {"column": "商品访客数", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},19,0),0)"},
-        {"column": "成交金额", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},7,0),0)"},
-        {"column": "成交客户数", "formula": "=IFERROR(VLOOKUP({this:商品编码},{source:sales},10,0),0)"}
-      ],
-      "calculations": [
-        {"column": "毛利额", "formula": "={this:京东价}-{this:SKU进价}"},
-        {"column": "毛利率", "formula": "={this:毛利额}/{this:京东价}", "number_format": "0.0%"}
-      ]
-    }
+  "paths": {"common_config": "config.json", "raw": "../data/raw", "normalize": "../data/normalize"},
+  "excel": {"default_sheet": "Sheet1", "header_row": 1, "overwrite": true},
+  "table_settings": {
+    "erp_inventory": {"sheet": "ERP库存", "output": "ERP库存.xlsx", "reference_range": "$A:$J"},
+    "erp_product": {"sheet": "Sheet1", "output": "ERP商品.xlsx", "reference_range": "$A:$M"},
+    "erp_ban": {"sheet": "Sheet1", "reference_range": "$A:$H"},
+    "erp_combo": {"sheet": "ERP组合", "output": "ERP组合.xlsx", "reference_range": "$A:$U"},
+    "baijilin_product": {"sheet": "0", "output": "百济林商品.xlsx"},
+    "baijilin_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
+    "jixitang_product": {"sheet": "0", "output": "济喜堂商品.xlsx"},
+    "jixitang_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
+    "jingxi_product": {"sheet": "0", "output": "京喜商品.xlsx"},
+    "jingxi_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
+    "yangsonghe_product": {"sheet": "0", "output": "养颂和商品.xlsx"},
+    "yangsonghe_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"},
+    "yikangmin_product": {"sheet": "0", "output": "易康民商品.xlsx"},
+    "yikangmin_sales": {"sheet": "Sheet1", "reference_range": "$B:$T"}
   }
 }

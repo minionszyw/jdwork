@@ -36,6 +36,14 @@ class NormalizeHelpersTest(unittest.TestCase):
         with Path("config/normalize.json").open(encoding="utf-8") as handle:
             normalize.validate_config(json.load(handle))
 
+    def test_common_config_validates_and_composes(self):
+        with Path("config/config.json").open(encoding="utf-8") as handle:
+            common = json.load(handle)
+        normalize.validate_config(common)
+        config = normalize.load_config(Path("config/normalize.json"))
+        self.assertEqual(len(config["sources"]["shops"]), 5)
+        self.assertIn("erp_product", config["rules"])
+
     def test_rejects_old_output_path_key(self):
         with Path("config/normalize.json").open(encoding="utf-8") as handle:
             config = json.load(handle)

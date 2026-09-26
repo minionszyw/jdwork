@@ -1,89 +1,14 @@
 {
-  "paths": {
-    "normalize_config": "normalize.json",
-    "output": "../data/filter"
-  },
-  "excel": {
-    "default_sheet": "Sheet1",
-    "header_row": 1
-  },
-  "output": {
-    "prefix": "filter-",
-    "sheet": "Sheet1",
-    "overwrite": false
-  },
-  "backfill": {
-    "key_fields": ["SKUID"],
-    "verify_fields": ["商品编码"],
-    "fields": ["商品状态", "商品总库存", "京东价", "商家SKU", "货号"],
-    "backup": true
-  },
+  "paths": {"common_config": "config.json", "normalize_config": "normalize.json", "output": "../data/filter"},
+  "excel": {"default_sheet": "Sheet1", "header_row": 1},
+  "output": {"prefix": "filter-", "sheet": "Sheet1", "overwrite": false},
+  "backfill": {"key_fields": ["SKUID"], "verify_fields": ["商品编码"], "fields": ["商品状态", "商品总库存", "京东价", "商家SKU", "货号"], "backup": true},
   "filters": [
-    {
-      "key": "down_products",
-      "name": "商品下架",
-      "enabled": true,
-      "logic": "and",
-      "conditions": [
-        {"field": "商品状态", "operator": "eq", "value": "上架"},
-        {"field": "可用数量(A - B - C - D)", "operator": "lt", "value": 10},
-        {"field": "货号", "operator": "not_in", "value": ["0011428", "0020096"]}
-      ]
-    },
-    {
-      "key": "up_products",
-      "name": "商品上架",
-      "enabled": true,
-      "logic": "and",
-      "conditions": [
-        {"field": "商品状态", "operator": "eq", "value": "自主下架"},
-        {"field": "可用数量(A - B - C - D)", "operator": "gte", "value": 10},
-        {"field": "B2C是否禁售", "operator": "ne", "value": "全时间段禁售"},
-        {"field": "货号", "operator": "not_in", "value": ["0011494", "1021430", "1022234"]}
-      ]
-    },
-    {
-      "key": "increase_stock",
-      "name": "增加库存",
-      "enabled": true,
-      "logic": "and",
-      "conditions": [
-        {"field": "商品状态", "operator": "eq", "value": "上架"},
-        {"field": "可用数量(A - B - C - D)", "operator": "gt", "value": 30},
-        {"field": "商品总库存", "operator": "lt", "value": 10},
-        {"field": "货号", "operator": "not_in", "value": ["0060243"]}
-      ]
-    },
-    {
-      "key": "loss_products",
-      "name": "商品亏本",
-      "enabled": true,
-      "logic": "and",
-      "conditions": [
-        {"field": "商品状态", "operator": "eq", "value": "上架"},
-        {"field": "毛利率", "operator": "lt", "value": 0.01}
-      ]
-    },
-    {
-      "key": "low_margin",
-      "name": "低毛利率",
-      "enabled": true,
-      "logic": "and",
-      "conditions": [
-        {"field": "商品状态", "operator": "eq", "value": "上架"},
-        {"field": "毛利率", "operator": "lt", "value": 0.15},
-        {"field": "货号", "operator": "not_in", "value": ["1056863"]}
-      ]
-    },
-    {
-      "key": "missing_encoding",
-      "name": "编码缺失",
-      "enabled": true,
-      "logic": "or",
-      "conditions": [
-        {"field": "商家SKU", "operator": "eq", "value": "--"},
-        {"field": "货号", "operator": "eq", "value": "--"}
-      ]
-    }
+    {"key": "down_products", "name": "商品下架", "enabled": true, "logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "上架"}, {"field": "可用数量(A - B - C - D)", "operator": "lt", "value": 10}, {"field": "货号", "operator": "not_in", "value": ["0011428", "0020096"]}]},
+    {"key": "up_products", "name": "商品上架", "enabled": true, "logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "自主下架"}, {"field": "可用数量(A - B - C - D)", "operator": "gte", "value": 10}, {"field": "B2C是否禁售", "operator": "ne", "value": "全时间段禁售"}, {"field": "货号", "operator": "not_in", "value": ["0011494", "1021430", "1022234"]}]},
+    {"key": "increase_stock", "name": "增加库存", "enabled": true, "logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "上架"}, {"field": "可用数量(A - B - C - D)", "operator": "gt", "value": 30}, {"field": "商品总库存", "operator": "lt", "value": 10}, {"field": "货号", "operator": "not_in", "value": ["0060243"]}]},
+    {"key": "loss_products", "name": "商品亏本", "enabled": true, "logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "上架"}, {"field": "毛利率", "operator": "lt", "value": 0.01}]},
+    {"key": "low_margin", "name": "低毛利率", "enabled": true, "logic": "and", "conditions": [{"field": "商品状态", "operator": "eq", "value": "上架"}, {"field": "毛利率", "operator": "lt", "value": 0.15}, {"field": "货号", "operator": "not_in", "value": ["1056863"]}]},
+    {"key": "missing_encoding", "name": "编码缺失", "enabled": true, "logic": "or", "conditions": [{"field": "商家SKU", "operator": "eq", "value": "--"}, {"field": "货号", "operator": "eq", "value": "--"}]}
   ]
 }

@@ -15,6 +15,7 @@ XL_OPEN_XML_WORKBOOK = 51
 REQUIRED_ERP_SOURCES = ("erp_inventory", "erp_product", "erp_ban", "erp_combo")
 REQUIRED_RULES = ("erp_inventory", "erp_product", "erp_combo")
 FORMULA_SOURCE_NAMES = {*REQUIRED_ERP_SOURCES, "sales"}
+TABLE_TYPES = {"erp", "shop_product", "shop_sales"}
 
 def clean_number(value: Any) -> Any:
     if value is None:
@@ -51,6 +52,18 @@ def rule_fields(rule: dict[str, Any]) -> list[str]:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    if "tables" in config:
+        validate_common_config(config)
+        return
+    if "sources" not in config and "common_config" in config.get("paths", {}):
+        if "norm" in config.get("paths", {}):
+            raise ValueError("paths.norm 已停用，请改用 paths.normalize")
+        common_path = source_path(Path.cwd(), config["paths"]["common_config"])
+        if not common_path.exists():
+            common_path = Path.cwd() / "config" / config["paths"]["common_config"]
+        if common_path.exists():
+            validate_common_config(read_json(common_path))
+        return
     errors: list[str] = []
     paths = config.get("paths", {})
     if not isinstance(paths, dict):
@@ -94,6 +107,7 @@ def validate_config(config: dict[str, Any]) -> None:
         if output in seen_outputs:
             errors.append(f"店铺输出文件重复: {output}")
         seen_outputs.add(output)
+    available_sources = set(sources) - {"shops"} | {shop.get("sales_table", "sales") for shop in shops if isinstance(shop, dict)} | {"sales"}
     for name, rule in rules.items():
         if not isinstance(rule, dict):
             errors.append(f"rules.{name} 必须是对象")
@@ -116,11 +130,63 @@ def validate_config(config: dict[str, Any]) -> None:
                 errors.append(f"rules.{name} 中每条公式必须包含 column 和 formula")
                 continue
             aliases = re.findall(r"\{source:([^{}]+)\}", formula_rule["formula"])
-            unknown = sorted(set(aliases) - FORMULA_SOURCE_NAMES)
+            unknown = sorted(set(aliases) - available_sources)
             if unknown:
                 errors.append(f"rules.{name}.{formula_rule['column']} 使用未知数据源: {', '.join(unknown)}")
     if errors:
         raise ValueError("配置校验失败:\n- " + "\n- ".join(errors))
+
+
+def validate_common_config(config: dict[str, Any]) -> None:
+    tables = config.get("tables")
+    rules = config.get("rules")
+    if not isinstance(tables, list) or not tables:
+        raise ValueError("公共配置必须包含非空 tables 数组")
+    if not isinstance(rules, list):
+        raise ValueError("公共配置必须包含 rules 数组")
+    names: set[str] = set()
+    shops: dict[str, list[str]] = {}
+    for index, item in enumerate(tables):
+        prefix = f"tables[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{prefix} 必须是对象")
+        missing = [key for key in ("table", "name", "type", "file") if not item.get(key)]
+        if missing:
+            raise ValueError(f"{prefix} 缺少字段: {', '.join(missing)}")
+        table = str(item["table"])
+        if table in names:
+            raise ValueError(f"table 重复: {table}")
+        names.add(table)
+        kind = item["type"]
+        if kind not in TABLE_TYPES:
+            raise ValueError(f"{prefix}.type 必须是 erp、shop_product 或 shop_sales")
+        if kind.startswith("shop_"):
+            shop = item.get("shop")
+            if not isinstance(shop, str) or not shop:
+                raise ValueError(f"{prefix} 的 shop_product/shop_sales 必须配置 shop")
+            shops.setdefault(shop, []).append(kind)
+    for shop, kinds in shops.items():
+        if len(kinds) != len(set(kinds)):
+            raise ValueError(f"店铺 {shop} 的商品/销售表类型重复")
+    for index, item in enumerate(rules):
+        prefix = f"rules[{index}]"
+        if not isinstance(item, dict) or not item.get("table") or not item.get("column"):
+            raise ValueError(f"{prefix} 必须包含 table 和 column")
+        if item["table"] not in names and item["table"] not in TABLE_TYPES:
+            raise ValueError(f"{prefix} 引用了不存在的 table: {item.get('table')}")
+        if item.get("type") not in {"format", "function"}:
+            raise ValueError(f"{prefix}.type 必须是 format 或 function")
+        value = item.get("value")
+        if item["type"] == "format" and value not in {"text", "number"}:
+            raise ValueError(f"{prefix}.value 必须是 text 或 number")
+        if item["type"] == "function" and (not isinstance(value, str) or not value):
+            raise ValueError(f"{prefix}.value 必须是非空 Excel 公式")
+        if item["type"] == "function":
+            aliases = re.findall(r"\{source:([^{}]+)\}", value)
+            available = names | {table["table"] for table in tables if table["type"] == "shop_sales"} | {"sales"}
+            unknown = sorted(set(aliases) - available)
+            if unknown:
+                raise ValueError(f"{prefix}.value 使用未知数据源: {', '.join(unknown)}")
 
 
 
@@ -239,17 +305,19 @@ def make_sources(
 ) -> dict[str, str]:
     refs: dict[str, str] = {}
     excluded = exclude or set()
-    for name in REQUIRED_ERP_SOURCES:
-        if name in excluded:
+    for name, item in sources.items():
+        if name == "shops" or name in excluded:
             continue
-        item = sources[name]
         root = normalize_dir if item.get("output") else raw_dir
         filename = item.get("output") or item["file"]
         path = source_path(root, filename)
         refs[name] = external_ref(path, item.get("sheet") or default_sheet, item.get("reference_range", "$A:$XFD"))
-    if shop:
+    if shop and shop.get("sales"):
         sales = source_path(raw_dir, shop, "sales")
-        refs["sales"] = external_ref(sales, shop.get("sales_sheet") or default_sheet, shop.get("sales_reference_range", "$A:$XFD"))
+        reference = external_ref(sales, shop.get("sales_sheet") or default_sheet, shop.get("sales_reference_range", "$A:$XFD"))
+        refs["sales"] = reference
+        if shop.get("sales_table"):
+            refs[shop["sales_table"]] = reference
     return refs
 
 
@@ -302,8 +370,10 @@ def process_file(runner: ExcelRunner, input_path: Path, output_path: Path, sourc
 
 def resolve_source_sheets(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], default_sheet: str) -> dict[str, Any]:
     resolved = dict(sources)
-    for name in REQUIRED_ERP_SOURCES:
-        item = dict(sources[name])
+    for name, item in sources.items():
+        if name == "shops":
+            continue
+        item = dict(item)
         item["sheet"] = actual_sheet_name(runner, source_path(raw_dir, item), item.get("sheet"), default_sheet, item.get("password"))
         resolved[name] = item
     return resolved
@@ -332,8 +402,9 @@ def check_workbook(runner: ExcelRunner, path: Path, item: dict[str, Any], rule_n
 
 
 def check_inputs(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], rules: dict[str, Any], defaults: dict[str, Any]) -> None:
-    for name in REQUIRED_ERP_SOURCES:
-        item = sources[name]
+    for name, item in sources.items():
+        if name == "shops":
+            continue
         path = source_path(raw_dir, item)
         if not path.exists():
             raise FileNotFoundError(path)
@@ -346,21 +417,90 @@ def check_inputs(runner: ExcelRunner, raw_dir: Path, sources: dict[str, Any], ru
             print(f"跳过: {shop['name']} 已停用；已有输出 {output} 不会自动删除")
             continue
         product = source_path(raw_dir, shop, "product")
-        sales = source_path(raw_dir, shop, "sales")
+        sales = source_path(raw_dir, shop, "sales") if shop.get("sales") else None
         for path in (product, sales):
+            if path is None:
+                continue
             if not path.exists():
                 raise FileNotFoundError(path)
-        selected_rule = shop.get("rule", "shop_product")
+        selected_rule = shop.get("product_table", "shop_product")
         product_item = {"sheet": shop.get("product_sheet"), "password": shop.get("product_password")}
-        sales_item = {"sheet": shop.get("sales_sheet"), "password": shop.get("sales_password")}
         product_sheet = check_workbook(runner, product, product_item, selected_rule, rules[selected_rule], defaults)
-        sales_sheet = check_workbook(runner, sales, sales_item, None, None, defaults)
-        print(f"检查: {shop['name']} 商品 [{product_sheet}] / 销售 [{sales_sheet}]")
+        sales_label = ""
+        if sales:
+            sales_item = {"sheet": shop.get("sales_sheet"), "password": shop.get("sales_password")}
+            sales_sheet = check_workbook(runner, sales, sales_item, None, None, defaults)
+            sales_label = f" / 销售 [{sales_sheet}]"
+        print(f"检查: {shop['name']} 商品 [{product_sheet}]{sales_label}")
+
+
+def _compose_config(specialized: dict[str, Any], common: dict[str, Any], base: Path) -> dict[str, Any]:
+    validate_common_config(common)
+    settings = specialized.get("table_settings", {})
+    if not isinstance(settings, dict):
+        raise ValueError("normalize.json 的 table_settings 必须是对象")
+    table_names = {item["table"] for item in common["tables"]}
+    unknown_settings = sorted(set(settings) - table_names)
+    if unknown_settings:
+        raise ValueError(f"table_settings 引用了不存在的 table: {', '.join(unknown_settings)}")
+    sources: dict[str, Any] = {}
+    shops: dict[str, dict[str, Any]] = {}
+    for table in common["tables"]:
+        alias = table["table"]
+        item = dict(table)
+        item.update(settings.get(alias, {}))
+        kind = table["type"]
+        if kind == "erp":
+            sources[alias] = item
+        elif kind == "shop_product":
+            shop = shops.setdefault(table["shop"], {"name": table["shop"]})
+            shop.update({"product": table["file"], "product_table": alias})
+            if "enabled" in item:
+                shop["enabled"] = item["enabled"]
+            for key in ("sheet", "password"):
+                if key in item:
+                    shop[f"product_{key}"] = item[key]
+            if "output" in item:
+                shop["output"] = item["output"]
+        elif kind == "shop_sales":
+            shop = shops.setdefault(table["shop"], {"name": table["shop"]})
+            shop.update({"sales": table["file"], "sales_table": alias})
+            if "enabled" in item:
+                shop["enabled"] = item["enabled"]
+            for key in ("sheet", "password", "reference_range"):
+                if key in item:
+                    shop[f"sales_{key}"] = item[key]
+    sources["shops"] = list(shops.values())
+    rules: dict[str, dict[str, Any]] = {}
+    table_targets = {
+        kind: [item["table"] for item in common["tables"] if item["type"] == kind]
+        for kind in TABLE_TYPES
+    }
+    for action in common["rules"]:
+        targets = table_targets.get(action["table"], [action["table"]])
+        for target in targets:
+            rule = rules.setdefault(target, {"text_columns": [], "number_columns": [], "lookups": [], "calculations": []})
+            if action["type"] == "format":
+                rule[f"{action['value']}_columns"].append(action["column"])
+            else:
+                formula = {"column": action["column"], "formula": action["value"]}
+                if action.get("number_format"):
+                    formula["number_format"] = action["number_format"]
+                rule["lookups"].append(formula)
+    composed = dict(specialized)
+    composed["sources"] = sources
+    composed["rules"] = rules
+    return composed
 
 
 def load_config(path: Path) -> dict[str, Any]:
     config = read_json(path)
-    validate_config(config)
+    if "tables" in config:
+        validate_common_config(config)
+        return config
+    common_path = source_path(path.parent.resolve(), config.get("paths", {}).get("common_config", "config.json"))
+    common = read_json(common_path)
+    config = _compose_config(config, common, path.parent.resolve())
     return config
 
 
@@ -393,11 +533,11 @@ def run(config_path: Path) -> None:
     try:
         check_inputs(runner, raw_dir, config["sources"], rules, defaults)
         sources = resolve_source_sheets(runner, raw_dir, config["sources"], defaults["default_sheet"])
-        fixed_outputs = {"erp_inventory": "ERP库存.xlsx", "erp_product": "ERP商品.xlsx", "erp_combo": "ERP组合.xlsx"}
-        for name in ("erp_inventory", "erp_product", "erp_combo"):
-            item = sources[name]
-            output = item.get("output", fixed_outputs[name])
-            refs = {} if name == "erp_inventory" else make_sources(
+        for name, item in sources.items():
+            if name == "shops":
+                continue
+            output = item.get("output", f"{Path(item['file']).stem}.xlsx")
+            refs = make_sources(
                 raw_dir,
                 normalize_dir,
                 sources,
@@ -405,16 +545,19 @@ def run(config_path: Path) -> None:
                 defaults["default_sheet"],
                 {name},
             )
+            if name not in rules:
+                continue
             process_file(runner, source_path(raw_dir, item), source_path(normalize_dir, output), item, rules[name], defaults, refs)
         for configured_shop in sources.get("shops", []):
             if not configured_shop.get("enabled", True):
                 continue
             shop = dict(configured_shop)
             product = source_path(raw_dir, shop, "product")
-            sales = source_path(raw_dir, shop, "sales")
+            sales = source_path(raw_dir, shop, "sales") if shop.get("sales") else None
             shop["product_sheet"] = actual_sheet_name(runner, product, shop.get("product_sheet"), defaults["default_sheet"], shop.get("product_password"))
-            shop["sales_sheet"] = actual_sheet_name(runner, sales, shop.get("sales_sheet"), defaults["default_sheet"], shop.get("sales_password"))
-            selected_rule = shop.get("rule", "shop_product")
+            if sales:
+                shop["sales_sheet"] = actual_sheet_name(runner, sales, shop.get("sales_sheet"), defaults["default_sheet"], shop.get("sales_password"))
+            selected_rule = shop.get("product_table", "shop_product")
             output = shop.get("output") or f"{product.stem}.xlsx"
             source = {"sheet": shop["product_sheet"], "password": shop.get("product_password")}
             process_file(runner, product, source_path(normalize_dir, output), source, rules[selected_rule], defaults, make_sources(raw_dir, normalize_dir, sources, shop, defaults["default_sheet"]))

@@ -190,7 +190,7 @@ def run(config_path: Path, input_path: Path | None, dry_run: bool) -> int:
         raw_header_row = int(normalize_config.get("excel", {}).get("header_row", 1))
         for shop_name, updates in grouped.items():
             shop = shops[shop_name]
-            rule = normalize_config["rules"][shop.get("rule", "shop_product")]
+            rule = normalize_config["rules"][shop.get("product_table", shop.get("rule", "shop_product"))]
             text_fields = set(rule.get("text_columns", []))
             total += process_store(runner, raw_dir, shop, updates, verify_fields, text_fields, dry_run, bool(config.get("backfill", {}).get("backup", True)), raw_header_row)
         print(f"{'预览' if dry_run else '回填'}完成，共 {total} 个字段变更")
